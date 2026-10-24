@@ -1,0 +1,51 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+# The distribution follows the py-prefix convention of wrappers such as pygit2,
+# pyzmq and pycairo. The import package is plain `keleusma`.
+name = "pykeleusma"
+dynamic = ["version"]
+description = "Python bindings for the Keleusma scripting language"
+readme = "README.md"
+license = "0BSD"
+license-files = ["LICENSE"]
+authors = [{ name = "Brendan Sechter", email = "sgeos@hotmail.com" }]
+# Python 3.12 is the verification baseline and the stable-ABI floor in Cargo.toml.
+requires-python = ">=3.12"
+dependencies = []
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Interpreters",
+]
+
+[project.urls]
+Keleusma = "https://github.com/sgeos/keleusma"
+
+[dependency-groups]
+dev = ["maturin==1.15.0", "pytest==9.1.1", "ruff==0.17.2", "pyright==1.1.414"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "keleusma._keleusma"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "S", "ANN", "RET", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Assertions are how pytest states expectations.
+"tests/*" = ["S101"]
+
+[tool.pyright]
+include = ["python", "tests"]
+typeCheckingMode = "strict"
