@@ -18,6 +18,8 @@
 //! default span, whose line is 0. A line of 0 therefore means that no location is
 //! known, and the exception reports `None` for both line and column.
 
+use std::collections::BTreeMap;
+
 use keleusma::ast::Program;
 use keleusma::bytecode::Module as KeleusmaModule;
 use keleusma::compiler::compile as keleusma_compile;
@@ -28,7 +30,7 @@ use keleusma::token::Span;
 use pyo3::prelude::*;
 
 use crate::convert::Widths;
-use crate::types::EntrySignature;
+use crate::types::{EntrySignature, NativeDecl, native_decls};
 use crate::yield_check;
 
 pyo3::import_exception!(keleusma._errors, LexError);
@@ -53,6 +55,8 @@ pub struct Boundary {
     pub signature: Option<EntrySignature>,
     /// The scalar widths flat bodies are packed with.
     pub widths: Widths,
+    /// What the program's `use` lines declare about each named native.
+    pub natives: BTreeMap<String, NativeDecl>,
 }
 
 impl Module {
@@ -185,6 +189,7 @@ pub fn compile(py: Python<'_>, source: &str) -> PyResult<Module> {
     let boundary = Boundary {
         signature: EntrySignature::from_program(&program, default_frac_bits),
         widths: Widths::of(&inner),
+        natives: native_decls(&program, default_frac_bits),
     };
     Ok(Module { inner, boundary })
 }

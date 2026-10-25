@@ -13,21 +13,20 @@ completed, moved or abandoned.
 - **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
   and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
   local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
-- **Tasks 1 to 6 done.** `keleusma.compile` returns a `Module`, which keeps the declared
-  types of `main`, or raises a located `SourceError`. `keleusma.VM` verifies the module
-  and owns its arena. `vm.call(*args)` and `vm.resume(value)` convert by declared type
-  and return `Yielded`, `Finished` or `Reset`. `vm.stream(*args, inputs=None)` drives
-  them as a generator that returns the `Finished` value. `vm.failed` is set after a
-  runtime error. `vm.wcet_per_iteration` and `vm.arena_capacity` give the worst-case
-  figures.
+- **Tasks 1 to 7 done.** `keleusma.compile` returns a `Module`, which keeps the declared
+  types of `main` and its natives, or raises a located `SourceError`. `keleusma.VM`
+  verifies the module and owns its arena. `vm.call`, `vm.resume` and `vm.stream` run it.
+  Python natives are passed in `natives=` or through `vm.register`, with bounds that
+  size the arena or are refused, and a native's exception reaches the caller unchanged.
+  `vm.wcet_per_iteration` and `vm.arena_capacity` give the worst-case figures.
 - **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 - **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Next step
 
-Task 7, `vm.register(name, callable)` and `vm.set_native_bounds`, with natives and their
-bounds declared at construction so the arena covers them, as the design records.
+Task 8, the examples, a PyGame frame loop, a NumPy reduction and a batched update loop in
+Dromon's event and action shape, each run in a test or a documented manual check.
 
 ## Open
 
@@ -71,8 +70,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 154 tests pass
-cargo test                  # 26 Rust tests pass
+uv sync && uv run pytest    # 178 tests pass
+cargo test                  # 27 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

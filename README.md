@@ -13,8 +13,9 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 **Early development.** The repository was cut on 2026-10-24 and builds against the
 published Keleusma 0.2.2 from crates.io. Compiling a script, building a verified VM,
-calling and resuming it, and streaming it as a generator work. Python natives and the
-examples are still to come, as the first milestone lists.
+calling and resuming it, streaming it as a generator, and Python natives work. The
+examples, the full statement of the guarantee boundary and a release are still to
+come, as the first milestone lists.
 
 ```python
 import keleusma
@@ -50,6 +51,11 @@ For scheduling, `vm.wcet_per_iteration` gives the worst-case time of one iterati
 `vm.arena_capacity` gives the arena's size in bytes. Both cover the script and the
 declared bounds of natives only, never Python or the binding's conversions.
 
+**Natives are outside the guarantee.** A Python callable registered as a native has no
+time or memory bound. The `wcet` and `wcmu_bytes` you declare for it are attestations
+Keleusma trusts and uses for sizing, not limits Python obeys. A native's exception
+reaches the caller of `call` or `resume` unchanged.
+
 A VM reserves `argument_bytes`, 4096 by default, of its arena for composite arguments
 such as tuples carrying text. A host that passes larger values gives a larger figure. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
 and the planned interface in
@@ -62,16 +68,17 @@ keleusma.KELEUSMA_VERSION  # "0.2.2"
 keleusma.BYTECODE_VERSION  # 1, read from the linked runtime
 ```
 
-## Planned interface
+## Interface at a glance
 
-Implemented except `register`. This is the target for version 0.1.0.
+Every part of this sketch is implemented, as the target for version 0.1.0.
 
 ```python
 import keleusma
 
-vm.register("draw", lambda x, y: ...)  # a Python callable as a host native, not yet
+# Natives declared at construction size the arena with their memory bounds.
+vm = keleusma.VM(module, natives={"host::draw": keleusma.Native(draw, wcet=50)})
 
-for state in vm.stream(first_event, inputs=events):  # implemented
+for state in vm.stream(first_event, inputs=events):
     match state:
         case keleusma.Yielded(actions):
             ...  # perform the actions

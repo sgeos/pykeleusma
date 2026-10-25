@@ -47,9 +47,10 @@
 //!    cover it. An argument that does not fit fails with Keleusma's `OutOfArena`, a clean
 //!    error, never undefined behaviour.
 //!
-//! The footprint is computed with no native memory bounds, because no natives exist at
-//! construction. A native registered later with a declared memory bound is not covered
-//! by this capacity. Roadmap task 7 owns that gap, as the design document records.
+//! The footprint includes the memory bound declared for each native, passed in the
+//! order of the module's `native_names`, which is how `auto_arena_capacity_for` takes
+//! them. A bound raised after construction is re-checked with `verify_resources` and
+//! refused if this arena cannot hold it.
 
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -143,10 +144,15 @@ pub struct ArenaPlan {
 }
 
 impl ArenaPlan {
-    /// Plan the arena for `module` with `argument_bytes` reserved for arguments.
-    pub fn for_module(module: &Module, argument_bytes: usize) -> Result<Self, OwnedVmError> {
-        let footprint = auto_arena_capacity_for(module, &[]).map_err(OwnedVmError::Vm)?;
-        let heap = module_runtime_footprint(module, &[])
+    /// Plan the arena for `module` with `argument_bytes` reserved for arguments and
+    /// `native_wcmu` holding each native's memory bound in `native_names` order.
+    pub fn for_module(
+        module: &Module,
+        argument_bytes: usize,
+        native_wcmu: &[u32],
+    ) -> Result<Self, OwnedVmError> {
+        let footprint = auto_arena_capacity_for(module, native_wcmu).map_err(OwnedVmError::Vm)?;
+        let heap = module_runtime_footprint(module, native_wcmu)
             .map_err(|e| {
                 OwnedVmError::Vm(VmError::VerifyError(format!(
                     "{}: {}",
@@ -191,8 +197,12 @@ impl OwnedVm {
     ///
     /// `argument_bytes` is the part of the arena reserved for composite arguments, as
     /// the module documentation describes.
-    pub fn new(module: Module, argument_bytes: usize) -> Result<Self, OwnedVmError> {
-        let plan = ArenaPlan::for_module(&module, argument_bytes)?;
+    pub fn new(
+        module: Module,
+        argument_bytes: usize,
+        native_wcmu: &[u32],
+    ) -> Result<Self, OwnedVmError> {
+        let plan = ArenaPlan::for_module(&module, argument_bytes, native_wcmu)?;
         let capacity = plan.capacity;
         let persistent = plan.persistent;
         let mut arena = Arena::try_with_capacity(capacity)
@@ -237,6 +247,32 @@ impl OwnedVm {
     pub fn wcet_per_iteration(&self) -> Result<u32, VmError> {
         self.cell
             .with_dependent(|_arena, vm| vm.wcet_per_iteration())
+    }
+
+    /// Register `func` as the native `name`, replacing any earlier registration.
+    pub fn register_native<Func>(&mut self, name: &str, func: Func)
+    where
+        Func:
+            for<'b> Fn(&keleusma::vm::NativeCtx<'b>, &[Value]) -> Result<Value, VmError> + 'static,
+    {
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.register_native_with_ctx_closure(name, func));
+    }
+
+    /// Declare the worst-case time and arena memory of one call of the native `name`.
+    pub fn set_native_bounds(
+        &mut self,
+        name: &str,
+        wcet: u32,
+        wcmu_bytes: u32,
+    ) -> Result<(), VmError> {
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.set_native_bounds(name, wcet, wcmu_bytes))
+    }
+
+    /// Check the module, with the natives' current bounds, against this arena.
+    pub fn verify_resources(&self) -> Result<(), VmError> {
+        self.cell.with_dependent(|_arena, vm| vm.verify_resources())
     }
 
     /// Resume after a yield or a reset, with the same validity rule as [`Self::call`].
@@ -286,7 +322,7 @@ mod tests {
 
     /// Drive a stream for `iterations` steps, failing on the first error.
     fn drive(source: &str, budget: usize, iterations: i64, argument: &dyn Fn(i64) -> Value) {
-        let mut vm = OwnedVm::new(module(source), budget).expect("new");
+        let mut vm = OwnedVm::new(module(source), budget, &[]).expect("new");
         vm.call(&[argument(0)]).expect("call");
         for step in 1..iterations {
             match vm.resume(argument(step)) {
@@ -370,7 +406,7 @@ mod tests {
 
     #[test]
     fn an_argument_larger_than_the_budget_fails_cleanly() {
-        let mut vm = OwnedVm::new(module(PAIR_STREAM), 64).expect("new");
+        let mut vm = OwnedVm::new(module(PAIR_STREAM), 64, &[]).expect("new");
         let large = Value::tuple(vec![text("tokens"), text(&"x".repeat(4096))]);
         assert!(matches!(vm.call(&[large]), Err(VmError::OutOfArena(_))));
     }
@@ -378,7 +414,7 @@ mod tests {
     #[test]
     fn the_plan_adds_its_parts() {
         let built = module(WORD_STREAMS[3]);
-        let plan = ArenaPlan::for_module(&built, 100).expect("plan");
+        let plan = ArenaPlan::for_module(&built, 100, &[]).expect("plan");
         assert_eq!(
             plan.footprint,
             auto_arena_capacity_for(&built, &[]).expect("fp")
@@ -391,7 +427,7 @@ mod tests {
             plan.capacity,
             plan.footprint + plan.persistent + plan.regrowth + plan.argument_bytes
         );
-        let vm = OwnedVm::new(built, 100).expect("new");
+        let vm = OwnedVm::new(built, 100, &[]).expect("new");
         assert_eq!(vm.arena_capacity(), plan.capacity);
         assert_eq!(vm.plan(), plan);
     }
@@ -400,7 +436,7 @@ mod tests {
     fn an_argument_budget_that_overflows_is_refused() {
         let built = module(WORD_STREAMS[0]);
         assert!(matches!(
-            OwnedVm::new(built, usize::MAX),
+            OwnedVm::new(built, usize::MAX, &[]),
             Err(OwnedVmError::CapacityOverflow)
         ));
     }
@@ -410,7 +446,7 @@ mod tests {
         // The VM borrows the arena by address. Moving the owner into a Box and back
         // out must not invalidate that borrow, which self_cell's heap-allocated
         // owner guarantees.
-        let vm = OwnedVm::new(module("fn main() -> Word { 40 + 2 }"), 0).expect("new");
+        let vm = OwnedVm::new(module("fn main() -> Word { 40 + 2 }"), 0, &[]).expect("new");
         let mut moved = *Box::new(vm);
         assert_eq!(finished_int(&mut moved), 42);
     }
@@ -425,7 +461,7 @@ mod tests {
         let source = "struct Point { x: Word, y: Word }\n\
                       private data d { p: Point }\n\
                       fn main() -> Word { d.p = Point { x: 3, y: 4 }; d.p.x + d.p.y }";
-        let mut vm = OwnedVm::new(module(source), 0).expect("new");
+        let mut vm = OwnedVm::new(module(source), 0, &[]).expect("new");
         assert_eq!(finished_int(&mut vm), 7);
         drop(vm);
     }

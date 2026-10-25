@@ -4,25 +4,37 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, tasks 1 to 6
+## 2026-10-25, tasks 1 to 7
 
-**Goal.** Complete all tasks from 1 to 6, skipping those already done, then commit,
+**Goal.** Complete all tasks from 1 to 7, skipping those already done, then commit,
 push and merge all work.
 
-**Already done.** Tasks 1 to 5b, merged through pull requests 1 to 8. Only task 6
+**Already done.** Tasks 1 to 6, merged through pull requests 1 to 9. Only task 7
 remained.
 
-**Done, task 6.** `vm.stream(*args, inputs=None)` returns a generator that yields each
-`Yielded` and `Reset` state and returns the `Finished` value, so iteration ends on
-`Finished`. Resume inputs come from the `inputs` iterable or from `send`. `next()` sends
-`None`, which suits streams whose parameter is `()`.
+**Done, task 7.** Python callables serve as Keleusma natives. They are passed at
+construction, `VM(module, natives={"host::f": f})` or with declared bounds through
+`keleusma.Native(f, wcet=..., wcmu_bytes=...)`, or later through `vm.register`.
+`vm.set_native_bounds` and `vm.native_bounds` manage the bounds.
 
-**The stated meaning of `Reset`.** A `loop main` never finishes. It reports `Reset`
-after each iteration, and the next input starts the next iteration as its argument. The
-generator yields `keleusma.Reset()` at that boundary.
+- **A native's exception reaches the caller unchanged.** The caller of `call` or
+  `resume` receives the very object the native raised, including `KeyboardInterrupt`,
+  and the VM is then marked failed.
+- **Declared bounds are covered or refused.** Memory bounds given at construction size
+  the arena. A later bound the arena cannot hold raises `VerifyError` and is reverted
+  in Keleusma as well as in the binding.
+- **Cycles are collected.** The VM exposes its natives to Python's garbage collector,
+  so a native bound to the object that owns its VM does not leak.
+- **Missing natives** are refused before the VM runs, so the VM stays usable.
 
-**Verification.** 154 Python tests and 26 Rust tests passed locally. A mutation that kept
-iterating past `Finished` made five tests fail. The README's streaming pattern was run.
-`ruff`, `pyright`, `cargo fmt` and `cargo clippy` were clean.
+**Found.** A native's composite result is copied into the arena on every call, so a
+native returning text tuples needs a declared `wcmu_bytes` or relies on the argument
+budget.
 
-**Next.** Task 7, Python natives with declared bounds.
+**Verification.** 178 Python tests and 27 Rust tests passed locally. Three mutations,
+not re-raising, not reverting and not traversing, each made tests fail. The first
+version of the revert test let its mutation survive, and was strengthened to check the
+time figure, which reads Keleusma's own copy of the bounds. The README's native pattern
+was run. `ruff`, `pyright`, `cargo fmt` and `cargo clippy` were clean.
+
+**Next.** Task 8, the examples.
