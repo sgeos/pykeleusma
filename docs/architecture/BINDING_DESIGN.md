@@ -703,8 +703,10 @@ depends on 0.2.2.
 - **NumPy without copying.** `Vm::call_with_shared(&mut [u8], ...)` lends the VM a shared
   data buffer for one call. A NumPy array exposed through the buffer protocol could be
   that buffer.
-- **Carrying private data across a hot swap,** which needs an accessor for the old
-  module's private values from Keleusma.
+- **Carrying composite private data across a hot swap,** which needs Keleusma to keep
+  or expose the composite pool. Scalar private data already carries across through
+  `vm.private_data` and `replace_module(module, private=...)`.
 - **Publishing wheels.** `.github/workflows/wheels.yml` builds and smoke-tests wheels
-  for Linux, macOS and Windows on every pull request, and publishing to PyPI needs the
-  operator's confirmation in session.
+  for Linux, macOS and Windows and the source distribution on every pull request. It
+  publishes only from a version tag the operator pushes, after the operator approves
+  the `pypi` environment, as `docs/process/RELEASING.md` describes.

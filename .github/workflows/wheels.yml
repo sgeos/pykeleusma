@@ -1,11 +1,18 @@
-# Release wheels, built and smoke-tested but never published.
+# Release wheels and the source distribution, built and smoke-tested on every pull
+# request, and published to PyPI only from a pushed version tag.
 #
 # The extension uses the stable ABI from Python 3.12, so one wheel per platform
 # serves every later Python. Each wheel is installed into a clean interpreter and
-# runs a script, so a wheel that builds but does not import fails here. Publishing
-# to PyPI needs the operator's confirmation in session, so this workflow has no
-# token, no publishing step and only read permission. Actions are pinned to full
-# commit hashes, with the release tag in a comment, as in ci.yml.
+# runs a script, so a wheel that builds but does not import fails here. The source
+# distribution is built into a wheel from scratch and runs the same script, so a
+# missing source file fails here too.
+#
+# Publishing uses PyPI trusted publishing, with no stored token. Only the publish
+# job may request an identity token, it runs only for a tag that names the version
+# being built, and it runs in the `pypi` environment, which should require the
+# operator's approval. Pushing a tag is the operator's decision, as described in
+# docs/process/RELEASING.md. Actions are pinned to full commit hashes, with the
+# release tag in a comment, as in ci.yml.
 
 name: Wheels
 
@@ -65,6 +72,16 @@ jobs:
           print(keleusma.__version__, keleusma.KELEUSMA_VERSION)
           "
 
+      - name: Check that the wheel carries the license notices
+        shell: bash
+        run: |
+          python - dist/*.whl <<'PY'
+          import sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          for wanted in ("LICENSE", "THIRD_PARTY_LICENSES.txt"):
+              assert any(n.endswith("/licenses/" + wanted) for n in names), wanted
+          PY
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}
@@ -85,8 +102,60 @@ jobs:
           command: sdist
           args: --out dist
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Build the source distribution, install it and run a script
+        # The runner's preinstalled Rust toolchain compiles the extension, as it
+        # would for a user on a platform without a wheel. pip fetches maturin, the
+        # build backend, from PyPI.
+        run: |
+          python -m venv smoke
+          smoke/bin/python -m pip install dist/*.tar.gz
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/smoke/bin/python" -c "
+          import keleusma
+          vm = keleusma.VM(keleusma.compile('fn main(x: Word) -> Word { x * 2 }'))
+          assert vm.call(21) == keleusma.Finished(42), vm
+          print(keleusma.__version__, keleusma.KELEUSMA_VERSION)
+          "
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sdist
           path: dist/*.tar.gz
           if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pykeleusma/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Check that the tag names the version being published
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          ls dist
+          test "$(ls dist | wc -l)" -eq 6
+          for file in dist/*; do
+            case "$(basename "$file")" in
+              "pykeleusma-$version-"*.whl | "pykeleusma-$version.tar.gz") ;;
+              *) echo "$file does not match tag $TAG"; exit 1 ;;
+            esac
+          done
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

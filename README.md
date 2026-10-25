@@ -21,9 +21,9 @@ ship with Keleusma run in tests with their stated results, and so do three examp
 this repository's own. Keleusma 0.2.2 defects that the binding works around, and what
 it does not support, are in the design under Book coverage, and the move to Keleusma
 0.2.3 is prepared in
-[`docs/architecture/MIGRATION_V0_2_3.md`](docs/architecture/MIGRATION_V0_2_3.md). The first milestone is in
-[`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design in
-[`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md). Nothing is
+[`docs/architecture/MIGRATION_V0_2_3.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/MIGRATION_V0_2_3.md). The first milestone is in
+[`docs/roadmap/V0_1_0.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/roadmap/V0_1_0.md) and the design in
+[`docs/architecture/BINDING_DESIGN.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/BINDING_DESIGN.md). Nothing is
 published to PyPI yet.
 
 ## What is guaranteed, and what is not
@@ -55,6 +55,23 @@ Python.
 What the binding does guarantee is that failures surface as Python exceptions. A
 verification failure raises `VerifyError`, a runtime fault raises `VMError` and marks
 the VM `failed`, and a native's own exception reaches the caller unchanged.
+
+## Installing
+
+```sh
+pip install pykeleusma
+```
+
+Wheels are built for Linux on x86-64 and ARM64, macOS on Intel and Apple silicon, and
+Windows on x86-64, for CPython 3.12 and later through the stable application binary
+interface. Elsewhere, pip builds from the source distribution, which needs a Rust
+toolchain of at least 1.88.
+
+The version is the Keleusma release the binding is built against, followed by a fourth
+part that counts binding releases against it. Version 0.2.2.0 is the first binding
+release for Keleusma 0.2.2, and `keleusma.KELEUSMA_VERSION` reports the linked release.
+Bytecode saved by one Keleusma release may not load under another, as described under
+Relationship to Keleusma.
 
 ## Using it
 
@@ -206,8 +223,11 @@ This repository depends only on the published crate, pinned exactly in `Cargo.to
 It never builds against a Keleusma checkout and never edits the Keleusma repository.
 Moving to a later Keleusma release is a deliberate change, because 0.2.3 changes the
 bytecode version from 1 to 2. The reasons for a separate repository are in
-[`docs/decisions/STANDALONE_REPOSITORY.md`](docs/decisions/STANDALONE_REPOSITORY.md).
+[`docs/decisions/STANDALONE_REPOSITORY.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/decisions/STANDALONE_REPOSITORY.md).
 
 ## License
 
-[0BSD](LICENSE), the same as Keleusma.
+[0BSD](https://github.com/sgeos/pykeleusma/blob/main/LICENSE), the same as Keleusma.
+The wheels also contain Rust crates under their own licenses, whose notices are
+reproduced in
+[`THIRD_PARTY_LICENSES.txt`](https://github.com/sgeos/pykeleusma/blob/main/THIRD_PARTY_LICENSES.txt).

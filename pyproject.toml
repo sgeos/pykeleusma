@@ -13,19 +13,36 @@ version = "0.2.2.0"
 description = "Python bindings for the Keleusma scripting language"
 readme = "README.md"
 license = "0BSD"
-license-files = ["LICENSE"]
+# The wheel links Rust crates whose licenses require their notices to travel with
+# binary copies. tools/third_party_licenses.py generates the file.
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.txt"]
 authors = [{ name = "Brendan Sechter", email = "sgeos@hotmail.com" }]
 # Python 3.12 is the verification baseline and the stable-ABI floor in Cargo.toml.
 requires-python = ">=3.12"
 dependencies = []
+keywords = ["keleusma", "scripting", "interpreter", "wcet", "embedded-scripting"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Interpreters",
+    "Typing :: Typed",
 ]
 
 [project.urls]
+Repository = "https://github.com/sgeos/pykeleusma"
+Issues = "https://github.com/sgeos/pykeleusma/issues"
+Changelog = "https://github.com/sgeos/pykeleusma/blob/main/CHANGELOG.md"
 Keleusma = "https://github.com/sgeos/keleusma"
 
 [dependency-groups]
@@ -55,6 +72,12 @@ cache-keys = [
 python-source = "python"
 module-name = "keleusma._keleusma"
 features = ["pyo3/extension-module"]
+# Agent instructions and the scratch marker are repository tooling, not source.
+exclude = [
+    { path = "AGENTS.md", format = "sdist" },
+    { path = "CLAUDE.md", format = "sdist" },
+    { path = "tmp/**", format = "sdist" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
