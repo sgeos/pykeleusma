@@ -265,26 +265,33 @@ and requested on the operator's instruction as `pydromon-20261025-data-segment-r
   The Keleusma book, chapter 18, says the segment begins zeroed, which disagrees, and
   that was sent to `v0.2.3`. A test pins the behaviour.
 - **Shared `data` blocks, implemented.** Keleusma lends a module's shared block to each
-  call as a host buffer, through `call_with_shared` and `resume_with_shared`. The binding
-  exposes it as `vm.call(*args, shared=buffer)`, `vm.resume(value, shared=buffer)` and
-  `vm.stream(..., shared=buffer)`, where `buffer` is any writable, contiguous buffer of
-  bytes of exactly `vm.shared_data_bytes` bytes, such as a `bytearray`, a `memoryview` of
-  one, or a NumPy `uint8` array. Omitting it for a module that declares a block, or
-  passing one for a module that does not, raises `TypeError` before the VM runs.
-- **Copy in, copy back.** The buffer is copied into a Rust vector before the call and
-  copied back after it succeeds. Lending the Python memory in place would let a Python
-  native write to it while Keleusma holds a mutable borrow of the same bytes, which Rust
-  forbids, and it would need `unsafe` code. So a native sees the buffer as it was before
-  the call, and a failed call leaves it unchanged. The cost is one copy each way.
+  call as a host-owned byte buffer, through `call_with_shared` and `resume_with_shared`.
+  The VM owns that buffer in Rust for its whole life, zeroed at construction, and lends
+  it on every call.
+- **Sync, call, flush.** Decided on 2026-10-25 by the operator. A call given `shared=`,
+  any writable, contiguous byte buffer of exactly `vm.shared_data_bytes` bytes such as a
+  `bytearray`, a `memoryview` of one or a NumPy `uint8` array, syncs the Rust copy from
+  it, runs the VM, and flushes the Rust copy back to it. A call without `shared=` runs on
+  the Rust copy as it stands, so state persists across calls either way, and
+  `vm.shared_data` returns a copy of it. Passing `shared=` to a module without a block
+  raises `TypeError` before the VM runs.
+- **Python's buffer is never lent.** Whatever Python does to its own buffer during a call,
+  for example from a native, cannot affect the run, and the flush overwrites it. In the
+  operator's words, that is a matter for the Python code, not for Keleusma. This also
+  needs no `unsafe` code. A native sees the Python buffer as it was synced.
+- **After a failure** the flush is skipped, so the Python buffer keeps its pre-call
+  contents. The VM is then failed and refuses further use.
 - **Layout.** Fields are packed little-endian in declaration order, with no padding, as
   observed with `struct` in the tests: `Word` and `Float` take eight bytes, and `bool`
   and `Byte` one. A typed view of the block is future work, because Keleusma's layout
   table expands each array element into its own entry, so names and entries do not map
   one to one.
 
-**Evidence.** 13 tests cover reading, writing, host changes between steps, the layout,
-streams, other buffer types, every refusal, rollback after a failure and the native's
-view. A mutation that skipped the copy back made seven of them fail.
+**Evidence.** 17 tests cover reading, writing, persistence without a buffer, syncing over
+the VM's copy, host changes between steps, the layout, streams, other buffer types, every
+refusal, a failure, the native's view, and a native's write being overwritten by the
+flush. Mutations that skipped the flush, or cleared the Rust copy between calls, made
+tests fail.
 
 ## Examples, roadmap task 8
 
