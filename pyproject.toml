@@ -79,6 +79,8 @@ features = ["pyo3/extension-module"]
 exclude = [
     { path = "AGENTS.md", format = "sdist" },
     { path = "CLAUDE.md", format = "sdist" },
+    { path = "llms.txt", format = "sdist" },
+    { path = "scripts/**", format = "sdist" },
     { path = "tmp/**", format = "sdist" },
 ]
 

@@ -279,7 +279,17 @@ The build needs a Rust toolchain of at least 1.88 and [uv](https://docs.astral.s
 ```sh
 uv sync          # builds the extension with maturin and installs the dev tools
 uv run pytest
+./scripts/check.sh   # the whole local gate, as continuous integration checks it
 ```
+
+## Contributing
+
+Contributions are welcome. The steps are in
+[`CONTRIBUTING.md`](https://github.com/sgeos/pykeleusma/blob/main/CONTRIBUTING.md),
+and participation in the project's spaces follows the
+[`CODE_OF_CONDUCT.md`](https://github.com/sgeos/pykeleusma/blob/main/CODE_OF_CONDUCT.md).
+Report a vulnerability privately, as
+[`SECURITY.md`](https://github.com/sgeos/pykeleusma/blob/main/SECURITY.md) describes.
 
 ## Relationship to Keleusma
 

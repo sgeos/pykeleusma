@@ -1,0 +1,25 @@
+# Citation metadata, read by GitHub's "Cite this repository" button and by reference
+# managers. Add `version` and `date-released` at the first release, and keep them
+# current with each later one, as docs/process/RELEASING.md lists.
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "pykeleusma"
+abstract: >
+  pykeleusma is the Python binding for Keleusma, a total functional stream processor
+  whose programs have statically bounded worst-case execution time and memory use. It
+  runs Keleusma scripts inside Python programs.
+authors:
+  - family-names: "Sechter"
+    given-names: "Brendan"
+url: "https://github.com/sgeos/pykeleusma"
+repository-code: "https://github.com/sgeos/pykeleusma"
+license: "0BSD"
+type: software
+keywords:
+  - "keleusma"
+  - "python"
+  - "rust"
+  - "pyo3"
+  - "scripting-language"
+  - "virtual-machine"
+  - "wcet"

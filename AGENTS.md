@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI coding assistants other than Claude Code, such as Codex.
+Guidance for AI coding assistants other than Claude Code, such as Codex or Grok Build.
 
 ## Authoritative source
 
@@ -28,4 +28,7 @@ making any non-trivial change.
 - **Commit once per prompt,** and attribute the assistant that actually contributed.
 - **Ask before outward-facing actions,** such as creating a remote, pushing, or publishing.
 - **Scratch directories.** Use `tmp/` for transient files. Its contents are ignored. Never
-  commit anything under `secret/`.
+  commit anything under `secret/`, and never copy its contents into tracked files.
+- **Run `./scripts/check.sh` before committing.**
+- **One writer per checkout.** If another line is already working here, use
+  `scripts/worktree.sh` to work in a separate worktree.

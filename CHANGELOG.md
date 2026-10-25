@@ -15,6 +15,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Files from `sgeos/project-template`. A code of conduct, contribution guidelines,
+  citation metadata, an `llms.txt` index, code owners, Dependabot updates for the pinned
+  actions, release note categories, the recorded `main` ruleset, a decision template,
+  `.gitattributes`, and `scripts/check.sh`, which runs repository hygiene and every
+  local check in one command, with a pre-push hook and a worktree helper. CI gains a
+  job that runs the hygiene checks and lints the workflows with actionlint and zizmor,
+  and every job now has a timeout and only the permissions it needs. A second merge to
+  `main` no longer cancels the first merge's runs.
+
 - README badges, issue templates for bugs and requests, contact links for private
   vulnerability reports and for Keleusma itself, and a pull request checklist. A test
   keeps the static Keleusma and Python badges in step with the linked runtime and the

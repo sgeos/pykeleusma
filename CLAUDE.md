@@ -73,7 +73,13 @@ the full set, as the headers of `ci.yml` and `wheels.yml` describe. A failure on
 run the full set before merging, as for a release or a platform-specific change. Use
 scoped conventional commits such as `feat:`, `fix:`, `docs:`, `test:` and `chore:`.
 Commit messages carry no `Co-Authored-By` trailer, at the operator's instruction of
-2026-10-25.
+2026-10-25. Pull requests merge with a merge commit only, because squash and rebase
+merging are disabled in the repository settings.
+
+**One writer per checkout.** When more than one line works on the repository at once,
+each works in its own worktree on its own branch, created with `scripts/worktree.sh`.
+Two lines in one checkout share an index and a dirty tree, so one line's `git add`,
+stash or reset can take in or discard the other's work.
 
 **Irreversible or outward-facing actions need the operator's confirmation in session.**
 That includes creating or pushing to a remote, publishing to PyPI or crates.io, and
@@ -82,6 +88,9 @@ force-pushing.
 ## Common Commands
 
 ```sh
+./scripts/check.sh                            # the whole local gate below, apart from Miri
+./scripts/check.sh --hygiene-only             # repository hygiene only, as CI's repository job
+scripts/worktree.sh new feat/some-thing       # an isolated worktree for a parallel line
 uv sync                                       # build the extension and install dev tools
 uv run pytest                                 # tests
 uv run ruff check . && uv run ruff format --check .
@@ -97,6 +106,11 @@ MIRIFLAGS=-Zmiri-tree-borrows CARGO_TARGET_DIR=target/miri cargo +nightly miri t
 `pyproject.toml`. Miri runs under Tree Borrows because of the dependency issue recorded
 in the design document. After editing `src/lib.rs`, keep
 `python/keleusma/_keleusma.pyi` in step, because pyright reads the stub, not the binary.
+`scripts/check.sh` needs `shellcheck`, and its hygiene section is kept identical to
+`sgeos/project-template` so that a later sync is a plain comparison. If
+`secret/disclosure-terms.txt` exists, one term per line, the gate fails when a tracked
+file contains any of them and prints only the file and line. The scan cannot run in
+continuous integration, which does not have the list.
 
 ## Before Trusting a Green Run
 
@@ -104,6 +118,9 @@ in the design document. After editing `src/lib.rs`, keep
   extension tested the old code. Rebuild, then test.
 - **Count what was reached.** A suite that collected zero tests, or skipped them all, passes.
   Check the count in the summary line.
+- **A local pass is not a remote pass.** Continuous integration runs on other operating
+  systems and tool versions, and a pull request runs only the reduced set. Say which
+  one was observed.
 
 ## Scratch and Secret Directories
 

@@ -26,7 +26,9 @@ publishes is the operator's, and an agent prepares the release only up to the ta
    too when the Keleusma release changes. Run
    `uv run python tools/third_party_licenses.py` if `Cargo.lock` changed. Move the
    `Unreleased` section of `CHANGELOG.md` under a heading with the version and the
-   date. Update the status statements in `README.md` and `CLAUDE.md`, including the
+   date. Add or update `version` and `date-released` in `CITATION.cff`, and the
+supported versions in `SECURITY.md` if the policy changes. Update the status
+statements in `README.md` and `CLAUDE.md`, including the
    sentence that nothing is published yet before the first release. Label the pull
    request `full-ci`, so that every CI job and every wheel runs, and merge it once they
    pass with full counts.
