@@ -16,9 +16,10 @@
 
 use std::collections::BTreeMap;
 
+pub use keleusma::ast::DataVisibility;
 use keleusma::ast::{
-    ConstBinOp, ConstExpr, ConstParam, DataVisibility, FunctionCategory, ImportItem, PrimType,
-    Program, TypeDef, TypeExpr, TypeParam,
+    ConstBinOp, ConstExpr, ConstParam, FunctionCategory, ImportItem, PrimType, Program, TypeDef,
+    TypeExpr, TypeParam,
 };
 use keleusma::value_layout::{LayoutDescriptor, ScalarKind};
 
@@ -575,16 +576,21 @@ pub struct NativeDecl {
     pub external: bool,
 }
 
-/// The program's shared `data` block as a struct of its declared fields, which is
-/// how Keleusma lays the block out, packed in declaration order. `None` without a
-/// shared block. Keleusma 0.2.2 admits at most one. A field whose type does not
+/// The program's `data` block of the given visibility as a struct of its declared
+/// fields, which for a shared block is how Keleusma lays it out, packed in
+/// declaration order. `None` without such a block. Keleusma 0.2.2 admits at most one
+/// shared block, and the first private block is taken. A field whose type does not
 /// resolve makes the whole block unsupported, carried as the error.
-pub fn shared_block(program: &Program, default_frac_bits: u8) -> Option<Declared> {
+pub fn data_block(
+    program: &Program,
+    default_frac_bits: u8,
+    visibility: DataVisibility,
+) -> Option<Declared> {
     let resolver = Resolver::new(program, default_frac_bits);
     let block = program
         .data_decls
         .iter()
-        .find(|d| d.visibility == DataVisibility::Shared)?;
+        .find(|d| d.visibility == visibility)?;
     let fields = block
         .fields
         .iter()

@@ -32,7 +32,9 @@ use pyo3::types::PyBytes;
 
 use crate::convert::Widths;
 use crate::crypto;
-use crate::types::{Declared, EntrySignature, NativeDecl, native_decls, shared_block};
+use crate::types::{
+    DataVisibility, Declared, EntrySignature, NativeDecl, data_block, native_decls,
+};
 use crate::yield_check;
 use keleusma::wire_format;
 
@@ -83,6 +85,8 @@ pub struct Boundary {
     /// The shared `data` block as a struct of its declared fields, or `None` for a
     /// module without one or loaded from bytes, which carries no declarations.
     pub shared: Option<Declared>,
+    /// The private `data` block likewise, whose fields a hot swap may seed.
+    pub private: Option<Declared>,
 }
 
 impl Module {
@@ -296,7 +300,8 @@ pub fn compile(py: Python<'_>, source: &str) -> PyResult<Module> {
         signature: EntrySignature::from_program(&program, default_frac_bits),
         widths: Widths::of(&inner),
         natives: native_decls(&program, default_frac_bits),
-        shared: shared_block(&program, default_frac_bits),
+        shared: data_block(&program, default_frac_bits, DataVisibility::Shared),
+        private: data_block(&program, default_frac_bits, DataVisibility::Private),
     };
     Ok(Module {
         inner,
@@ -406,6 +411,7 @@ pub fn load_module(
         widths: Widths::of(&inner),
         natives: BTreeMap::new(),
         shared: None,
+        private: None,
     };
     Ok(Module {
         inner,

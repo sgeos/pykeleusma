@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use keleusma::bytecode::BlockType;
+use keleusma::bytecode::{BlockType, Value};
 use keleusma::vm::{DEFAULT_NATIVE_WCET, DEFAULT_NATIVE_WCMU_BYTES, VmError, VmState};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{
@@ -194,6 +194,118 @@ fn shared_type(module: &Module) -> Result<Ty, String> {
         ));
     }
     Ok(declared)
+}
+
+/// The new module's private slot values for a hot swap: the field values `private`
+/// names, converted by the module's declared private fields, and `()` for every slot
+/// it does not name, the state a fresh VM starts in.
+///
+/// Keleusma lists one private slot per field, and one per element of an array field,
+/// named `block.field` or `block.field[i]`, and takes the values in that order.
+fn private_values(module: &Module, private: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Value>> {
+    let fresh = OwnedVm::fresh_private_data(module.inner());
+    let Some(private) = private else {
+        return Ok(fresh);
+    };
+    let values = private
+        .cast::<PyMapping>()
+        .map_err(|_| PyTypeError::new_err("`private` must be a mapping of field names"))?;
+    let Some(Ok(Ty::Struct {
+        name: block,
+        fields,
+    })) = &module.boundary().private
+    else {
+        return Err(PyTypeError::new_err(
+            "`private` needs a module compiled from source that declares a private `data` \
+             block with fields of supported types",
+        ));
+    };
+    for key in values.keys()?.iter() {
+        let key: String = key.extract()?;
+        if !fields.iter().any(|(n, _)| *n == key) {
+            let known: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+            return Err(PyKeyError::new_err(format!(
+                "the private block `{block}` has no field `{key}`; its fields are {}",
+                known.join(", ")
+            )));
+        }
+    }
+    let slots = module
+        .inner()
+        .data_layout
+        .as_ref()
+        .map(|d| d.slots.clone())
+        .unwrap_or_default();
+    let private_slots = slots
+        .iter()
+        .filter(|slot| matches!(slot.visibility, keleusma::bytecode::SlotVisibility::Private));
+    let mut initial = Vec::with_capacity(fresh.len());
+    for slot in private_slots {
+        let rest = slot
+            .name
+            .strip_prefix(block.as_str())
+            .and_then(|rest| rest.strip_prefix('.'))
+            .ok_or_else(|| VMError::new_err(format!("an unexpected slot `{}`", slot.name)))?;
+        let (field, element) = match rest.split_once('[') {
+            Some((field, index)) => {
+                let index = index
+                    .strip_suffix(']')
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .ok_or_else(|| VMError::new_err(format!("an unexpected slot `{rest}`")))?;
+                (field, Some(index))
+            }
+            None => (rest, None),
+        };
+        let field_ty = fields
+            .iter()
+            .find(|(n, _)| n == field)
+            .map(|(_, t)| t)
+            .ok_or_else(|| VMError::new_err(format!("an undeclared slot `{}`", slot.name)))?;
+        let value = match values.get_item(field) {
+            Err(_) => Value::Unit,
+            Ok(object) => match (element, field_ty) {
+                (None, ty) if is_scalar(ty) => to_value(&object, ty)?,
+                (None, ty) => {
+                    return Err(PyTypeError::new_err(format!(
+                        "the private field `{field}` is {}, a composite; Keleusma 0.2.2 \
+                         clears the composite body pool after seeding the slots, so only \
+                         scalar fields and arrays of scalars can be seeded at a swap",
+                        ty.name()
+                    )));
+                }
+                (Some(i), Ty::Array(element_ty, count)) if is_scalar(element_ty) => {
+                    let items: Vec<Bound<'_, PyAny>> =
+                        object.try_iter()?.collect::<PyResult<_>>()?;
+                    if items.len() != *count {
+                        return Err(PyTypeError::new_err(format!(
+                            "expected {}, got a sequence of length {}",
+                            field_ty.name(),
+                            items.len()
+                        )));
+                    }
+                    to_value(&items[i], element_ty)?
+                }
+                _ => return Err(VMError::new_err(format!("an unexpected slot `{rest}`"))),
+            },
+        };
+        initial.push(value);
+    }
+    if initial.len() != fresh.len() {
+        return Err(VMError::new_err(format!(
+            "{} private slot value(s) for {} slot(s)",
+            initial.len(),
+            fresh.len()
+        )));
+    }
+    Ok(initial)
+}
+
+/// Whether a value of `ty` occupies a private slot directly, as a scalar.
+fn is_scalar(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Unit | Ty::Bool | Ty::Byte | Ty::Word | Ty::Fixed(_) | Ty::Float
+    )
 }
 
 /// The binding's offset for the shared slot named `field` or `field[i]` within the
@@ -559,7 +671,12 @@ impl VM {
     /// After the swap the new module is driven from `call`. Its private data starts as
     /// `()`, as in a fresh VM. Native registrations persist, and a native the new module
     /// names that is not yet registered must be registered before the next call.
-    fn replace_module(&mut self, module: PyRef<'_, Module>) -> PyResult<()> {
+    #[pyo3(signature = (module, *, private = None))]
+    fn replace_module(
+        &mut self,
+        module: PyRef<'_, Module>,
+        private: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
         if self.suspended {
             return Err(VMError::new_err(
                 "a hot swap is allowed only at an iteration boundary, after `Reset` or \
@@ -603,6 +720,8 @@ impl VM {
                 })
                 .collect()
         };
+        // Converted before anything changes, so a refused value leaves the old module.
+        let initial = private_values(&module, private)?;
         match module.signed() {
             // Signed bytes are verified against this VM's trust matrix, the keys it
             // was built with and those added by `register_verifying_key`. For an
@@ -610,9 +729,11 @@ impl VM {
             // kept for this check, so no decryption key is needed again.
             Some(SignedImage { bytes, .. }) => {
                 self.vm
-                    .replace_module_signed(module.inner(), bytes, &native_wcmu)
+                    .replace_module_signed(module.inner(), bytes, &native_wcmu, initial)
             }
-            None => self.vm.replace_module(module.inner().clone(), &native_wcmu),
+            None => self
+                .vm
+                .replace_module(module.inner().clone(), &native_wcmu, initial),
         }
         .map_err(|e| match e {
             // Keleusma's message points to its unchecked swap, which the binding does

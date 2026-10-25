@@ -338,9 +338,10 @@ impl OwnedVm {
     }
 
     /// Replace the module at an iteration boundary, as the book's chapter 37 describes,
-    /// with every private data slot of the new module starting as `()`, the state a
-    /// fresh VM starts in. Keleusma verifies the new module first and keeps the old one
-    /// if verification fails.
+    /// with the new module's private data slots holding `initial`, one value per
+    /// private slot in the order Keleusma lists them. [`Self::fresh_private_data`]
+    /// gives the state a fresh VM starts in. Keleusma verifies the new module first and
+    /// keeps the old one if verification fails.
     ///
     /// `native_wcmu` holds the declared memory bound of each native the new module
     /// names, in its `native_names` order.
@@ -348,16 +349,25 @@ impl OwnedVm {
     /// An unsigned module is refused once the VM trusts any key, the policy Keleusma's
     /// signed loader states, because a host that registered keys requires signed code.
     /// Keleusma 0.2.2's own `replace_module` does not apply that policy.
-    pub fn replace_module(&mut self, module: Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+    pub fn replace_module(
+        &mut self,
+        module: Module,
+        native_wcmu: &[u32],
+        initial: Vec<Value>,
+    ) -> Result<(), VmError> {
         if !self.trusted.is_empty() {
             return Err(VmError::from(LoadError::InvalidSignature));
         }
-        self.install(module, native_wcmu)
+        self.install(module, native_wcmu, initial)
     }
 
-    fn install(&mut self, module: Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+    fn install(
+        &mut self,
+        module: Module,
+        native_wcmu: &[u32],
+        initial: Vec<Value>,
+    ) -> Result<(), VmError> {
         self.check_fits(&module, native_wcmu)?;
-        let initial = Self::fresh_private_data(&module);
         self.cell
             .with_dependent_mut(|_arena, vm| vm.replace_module(module, initial))
     }
@@ -376,6 +386,7 @@ impl OwnedVm {
         module: &Module,
         bytes: &[u8],
         native_wcmu: &[u32],
+        initial: Vec<Value>,
     ) -> Result<(), VmError> {
         if !wire_format::header_requires_signature(bytes) {
             return Err(VmError::from(LoadError::InvalidSignature));
@@ -383,7 +394,7 @@ impl OwnedVm {
         wire_format::verify_module_signature(bytes, &self.trusted).map_err(VmError::from)?;
         let mut module = module.clone();
         module.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
-        self.install(module, native_wcmu)
+        self.install(module, native_wcmu, initial)
     }
 
     /// The opaque value at `index` in the VM's registry, which a flat composite's
@@ -424,7 +435,9 @@ impl OwnedVm {
     }
 
     /// Every private slot of `module` as `()`, the state a fresh VM starts in.
-    fn fresh_private_data(module: &Module) -> Vec<Value> {
+    /// KELEUSMA-0.2.2: on 0.2.3 a fresh VM starts scalar private slots at zero or their
+    /// declared initialiser, from `DataLayout::private_init`, which this should match.
+    pub fn fresh_private_data(module: &Module) -> Vec<Value> {
         let private_slots = module.data_layout.as_ref().map_or(0, |layout| {
             layout
                 .slots

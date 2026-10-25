@@ -213,3 +213,50 @@ def test_a_native_converts_by_the_swapped_modules_declaration() -> None:
     state = vm.call(1)
     assert state == keleusma.Finished(4.0)
     assert isinstance(state, keleusma.Finished) and isinstance(state.value, float)
+
+
+# Seeding the new module's private data, which Keleusma takes from the host at a swap.
+
+SEEDED = keleusma.compile(
+    "private data pv { q: Word, a: [Word; 2], t: (Word, bool) }\n"
+    "loop main(x: Word) -> Word "
+    "{ pv.q = pv.q + x; pv.t = (1, true); let r = yield pv.q + pv.a[1]; r }"
+)
+
+
+def test_a_swap_seeds_scalar_private_fields() -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"q": 10, "a": [1, 2]})
+    assert vm.call(1) == keleusma.Yielded(10 + 1 + 2)
+
+
+def test_a_field_not_named_starts_as_unit() -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"a": [1, 2]})
+    with pytest.raises(keleusma.VMError, match="Unit"):
+        vm.call(1)
+
+
+@pytest.mark.parametrize(
+    ("private", "error", "message"),
+    [
+        ({"t": (1, True)}, TypeError, "a composite"),
+        ({"zz": 1}, KeyError, "has no field `zz`"),
+        ({"a": [1]}, TypeError, "length 1"),
+        ({"q": "text"}, TypeError, "expected Word"),
+    ],
+)
+def test_a_refused_seed_keeps_the_old_module(
+    private: dict[str, object], error: type[Exception], message: str
+) -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"q": 0, "a": [0, 5]})
+    with pytest.raises(error, match=message):
+        vm.replace_module(SEEDED, private=private)
+    assert vm.call(1) == keleusma.Yielded(6)
+
+
+def test_seeding_needs_declarations() -> None:
+    loaded = keleusma.load_module(SEEDED.to_bytes())
+    with pytest.raises(TypeError, match="compiled from source"):
+        keleusma.VM(SEEDED).replace_module(loaded, private={"q": 1})
