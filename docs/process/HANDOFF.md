@@ -11,8 +11,13 @@ completed, moved or abandoned.
 
 - **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
 - **Continuous integration.** `ci.yml` covers Linux, macOS and Windows with Python
-  3.12 and 3.15, every local check, and Miri with Tree Borrows. `wheels.yml` builds and
-  smoke-tests wheels for five platforms and an sdist, and publishes nothing.
+  3.12 and 3.15, Linux also with 3.13 and 3.14, every local check, and Miri with Tree
+  Borrows. `wheels.yml` builds and smoke-tests wheels for five platforms and the sdist,
+  and has a publish job that runs only from a pushed `v*` tag in the `pypi`
+  environment. Nothing has been published.
+- **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
+  `tests/test_packaging.py`. `SECURITY.md` and `docs/process/RELEASING.md` exist. The
+  metadata passes `twine check --strict`, and the sdist installs and runs.
 - **Tasks 1 to 14 done.** Task 13 resolved the known issues and debt, and prepared for
   Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
   `use external` natives run, and the yield guard covers values with no recorded type.
@@ -34,8 +39,9 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
 
-Wait for Keleusma 0.2.3 to be published, with `keleusma-wire`, then follow the
-migration plan. Publishing 0.2.2.0 to PyPI is the operator's decision.
+The operator's review items in `REVERSE_PROMPT.md`, then the one-time setup and the
+release steps in `docs/process/RELEASING.md`. Publishing is the operator's decision.
+Separately, wait for Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan.
 
 ## Open
 
@@ -79,7 +85,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 400 tests pass
+uv sync && uv run pytest    # 406 tests pass
 cargo test                  # 49 Rust tests pass
 ```
 

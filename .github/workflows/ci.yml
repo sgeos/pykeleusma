@@ -36,6 +36,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         # 3.12 is the stable-ABI floor in Cargo.toml, and 3.15 the newest release.
         python: ["3.12", "3.15"]
+        # The versions between, which the package metadata also claims, on Linux.
+        include:
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: ubuntu-latest, python: "3.14" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

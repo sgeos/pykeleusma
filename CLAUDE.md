@@ -15,7 +15,9 @@ package is `keleusma`.
 **Status.** Cut on 2026-10-24. Version 0.2.2.0 builds against the published Keleusma 0.2.2,
 and tasks 1 to 14 of the first milestone are done. The binding covers what the Keleusma
 book describes, except what is blocked on Keleusma. CI tests Linux, macOS and Windows,
-and wheels are built but not published. The milestone is
+and wheels are built but not published.
+Publishing is prepared and waits on the operator, as
+[`docs/process/RELEASING.md`](docs/process/RELEASING.md) describes. The milestone is
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md), the design is
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md), and the move to
 0.2.3 is planned in
