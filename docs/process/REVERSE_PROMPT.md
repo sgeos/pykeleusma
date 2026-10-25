@@ -4,41 +4,28 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, GitHub configuration at parity, and README badges
+## 2026-10-25, the readiness check before publication
 
-**Asked.** Configure the GitHub repository sensibly, at parity with the Keleusma and
-angelssword-adventurers-creator repositories where that makes sense, with badges in
-the README.
+**Asked.** Double check that the GitHub repository is configured correctly, that all CI
+is green, and that the project is otherwise ready to publish.
 
-**Done, repository settings.** Applied through the GitHub interface, not tracked.
-- Topics, and a description naming the bounds. Merged branches are deleted. The unused
-  wiki and projects are off. All three repositories match on these, and on merge
-  methods, Actions permissions and secret scanning, which were already alike.
-- Private vulnerability reporting and Dependabot vulnerability alerts are on, as in
-  both references. Dependabot security updates stay off, as in both.
-- A ruleset named Protect main, copied from angelssword-adventurers-creator, blocks
-  force-pushes to and deletion of `main`.
-- Five merged feature branches left on the remote were deleted, after checking that
-  each is contained in `main`.
+**Checked, and as expected.**
+- The repository settings, topics, ruleset, private vulnerability reporting and
+  Dependabot alerts match what was set. There are no open Dependabot or secret
+  scanning alerts, pull requests, issues, tags or releases.
+- The newest CI and Wheels runs on `main`, at `13255fd`, passed every job. Regular
+  jobs ran 411 Python and 49 Rust tests, 3.14t and FreeBSD ran 410 with 1 skip, and
+  Miri ran 44 with 5 ignored. All 24 wheels and the source distribution built.
+- The local gate passes on `main`. The source distribution passes `twine check
+  --strict` and holds no scratch, secret or agent files.
+- `pykeleusma` is unregistered on PyPI and on TestPyPI.
+- The publish job's tag condition, environment, identity-token permission and file
+  count are unchanged.
 
-**Done, files.** Badges for CI, wheels, PyPI, the Python floor, the Keleusma pin, the
-license and the status, with a test for the static ones. Issue templates, a contact
-link configuration and a pull request checklist, modelled on Keleusma's and smaller.
+**Fixed.** The protected `pypi` environment did not exist, so a pushed tag would have
+created it unprotected. It now exists, with the operator as required reviewer,
+self-review allowed so that the operator can approve their own release, and
+deployments restricted to `v*` tags. `RELEASING.md` records it as done.
 
-**Not copied, deliberately.**
-- Keleusma's required linear history, which would forbid this repository's merge
-  commits.
-- Required status checks, which would leave a pull request blocked whenever path
-  filters skip a workflow.
-- GitHub Pages, which Keleusma uses for its book. This binding's documentation lives in
-  the repository.
-- Required sign-off on web commits, which angelssword has and Keleusma does not.
-
-**Flagged.** The PyPI badge reads "package not found" until the first release. The
-homepage field still points at the Keleusma repository, and could point at the PyPI
-page after release, which is the operator's choice.
-
-**Verification.** 411 Python tests pass locally, including the new badge test, which a
-stale badge was shown to fail. Pull request 25's full run under `full-ci` passed every
-job, FreeBSD with 409 tests and 1 skip. This pull request is the first to exercise the
-reduced set and the quick wheel.
+**Needs the operator.** Registering the trusted publisher on PyPI, choosing the release
+date for the release pull request, and pushing the tag and approving the deployment.

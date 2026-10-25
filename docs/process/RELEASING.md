@@ -12,10 +12,11 @@ publishes is the operator's, and an agent prepares the release only up to the ta
    trusted publisher for the project `pykeleusma`, with owner `sgeos`, repository
    `pykeleusma`, workflow `wheels.yml` and environment `pypi`. No token is stored in the
    repository.
-2. **The `pypi` environment on GitHub.** Under the repository's settings, create the
-   environment `pypi`, add the operator as a required reviewer, and restrict its
-   deployments to tags matching `v*`. Without the environment, GitHub would create it
-   on the first tag with no protection, and the publish job would run unapproved.
+2. **The `pypi` environment on GitHub.** Created on 2026-10-25, with the operator as
+   the required reviewer, self-review allowed so that the operator can approve their
+   own release, and deployments restricted to tags matching `v*`. Nothing remains to
+   do. Without it, GitHub would create the environment on the first tag with no
+   protection, and the publish job would run unapproved.
 3. **Private vulnerability reporting.** Enabled on 2026-10-25, because `SECURITY.md`
    directs reports there. Nothing remains to do.
 
