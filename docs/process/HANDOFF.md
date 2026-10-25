@@ -23,6 +23,12 @@ completed, moved or abandoned.
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 - **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
+## Standing permission
+
+Since 2026-10-25 the operator allows committing, pushing and merging through a pull
+request without asking each time, once CI passes with full test counts. Publishing to
+PyPI, creating a remote and force-pushing still need confirmation in session.
+
 ## Next step
 
 The 0.1.0 milestone's tasks are complete. A release to PyPI needs the operator's

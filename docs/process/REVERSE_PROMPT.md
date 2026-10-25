@@ -28,5 +28,10 @@ Python buffer being overwritten by the flush. A mutation that cleared the Rust c
 between calls made the persistence test fail. `ruff`, `pyright`, `cargo fmt` and
 `cargo clippy` were clean.
 
-**Not pushed.** The commit is on the branch `feat/rust-owned-shared`, waiting for the
-operator's confirmation to push and merge.
+**Merged.** Through pull request 13, after CI passed on Linux and macOS with Python 3.12
+and 3.15 and under Miri. `pydromon` was told about the changed semantics in
+`pykeleusma-20261025-shared-data-update`.
+
+**Standing permission.** The operator granted standing permission on 2026-10-25 to
+commit, push and merge work through a pull request without asking each time. Publishing
+to PyPI, creating a remote and force-pushing still need confirmation in session.
