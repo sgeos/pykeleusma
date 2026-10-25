@@ -28,7 +28,10 @@ use std::rc::Rc;
 
 use keleusma::bytecode::BlockType;
 use keleusma::vm::{DEFAULT_NATIVE_WCET, DEFAULT_NATIVE_WCMU_BYTES, VmError, VmState};
-use pyo3::exceptions::{PyKeyError, PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError};
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::{
+    PyKeyError, PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
@@ -60,6 +63,69 @@ fn construction_error(error: OwnedVmError) -> PyErr {
         OwnedVmError::ArenaAllocation { .. } => PyMemoryError::new_err(error.to_string()),
         OwnedVmError::CapacityOverflow => PyOverflowError::new_err(error.to_string()),
         OwnedVmError::PersistentRegion { .. } => PyRuntimeError::new_err(error.to_string()),
+    }
+}
+
+/// A host buffer lent to one call as the shared `data` block.
+///
+/// The buffer is copied into a Rust vector before the call and copied back after it
+/// succeeds, rather than lent in place. Lending the Python memory itself would let a
+/// Python native write to it while Keleusma holds a mutable borrow of the same bytes,
+/// which Rust's aliasing rules forbid, and it would need `unsafe` code. The cost is
+/// one copy each way, of `shared_data_bytes`, which is small by construction. A
+/// native running during the call sees the buffer as it was before the call. After a
+/// failed call the buffer is left as it was, because the VM's state is then undefined.
+struct Lent {
+    buffer: Option<PyBuffer<u8>>,
+    bytes: Vec<u8>,
+}
+
+impl Lent {
+    fn none() -> Self {
+        Self {
+            buffer: None,
+            bytes: Vec::new(),
+        }
+    }
+
+    fn new(object: &Bound<'_, PyAny>, size: usize) -> PyResult<Self> {
+        let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
+            PyTypeError::new_err(
+                "`shared` must support the buffer protocol with byte items, such as a \
+                 bytearray, a memoryview of one, or a NumPy uint8 array",
+            )
+        })?;
+        if buffer.readonly() {
+            return Err(PyTypeError::new_err(
+                "`shared` must be writable, because the script may change it",
+            ));
+        }
+        if !buffer.is_c_contiguous() {
+            return Err(PyValueError::new_err("`shared` must be contiguous"));
+        }
+        if buffer.item_count() != size {
+            return Err(PyValueError::new_err(format!(
+                "`shared` has {} bytes, but the module's shared `data` block has {size}",
+                buffer.item_count()
+            )));
+        }
+        let bytes = buffer.to_vec(object.py())?;
+        Ok(Self {
+            buffer: Some(buffer),
+            bytes,
+        })
+    }
+
+    fn bytes(&mut self) -> &mut [u8] {
+        &mut self.bytes
+    }
+
+    /// Copy the script's changes back into the host buffer.
+    fn give_back(self, py: Python<'_>) -> PyResult<()> {
+        match self.buffer {
+            Some(buffer) => buffer.copy_from_slice(py, &self.bytes),
+            None => Ok(()),
+        }
     }
 }
 
@@ -130,17 +196,6 @@ impl VM {
         argument_bytes: usize,
         natives: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        // A shared `data` block lives in a host buffer lent to every call, which the
-        // binding does not provide, so such a module could not run. Refusing it here
-        // replaces a failure at the first call that names Rust-only API.
-        let shared = module.inner().shared_data_bytes;
-        if shared > 0 {
-            return Err(VerifyError::new_err(format!(
-                "the module declares a shared `data` block of {shared} bytes, which \
-                 pykeleusma 0.1.0 does not support; use `private data`, or pass state \
-                 through the stream's input and output"
-            )));
-        }
         let names = module.inner().native_names.clone();
         let boundary = module.boundary().clone();
         if let Some(external) = names
@@ -324,13 +379,18 @@ impl VM {
     ///
     /// Returns `Yielded`, `Finished` or `Reset`, with the value converted by the
     /// declared return type.
-    #[pyo3(signature = (*args))]
+    ///
+    /// `shared` is a writable buffer of exactly `vm.shared_data_bytes` bytes for a
+    /// module that declares a shared `data` block, and must be omitted otherwise.
+    #[pyo3(signature = (*args, shared = None))]
     fn call<'py>(
         &mut self,
         py: Python<'py>,
         args: &Bound<'py, PyTuple>,
+        shared: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.check_usable()?;
+        let mut lent = self.lend(shared)?;
         let signature = self.signature()?;
         if args.len() != signature.params.len() {
             return Err(PyTypeError::new_err(format!(
@@ -348,8 +408,10 @@ impl VM {
                 to_value(&arg, ty)
             })
             .collect::<PyResult<Vec<_>>>()?;
-        let outcome = self.vm.call(&values);
-        self.state(py, outcome)
+        let outcome = self.vm.call_with_shared(lent.bytes(), &values);
+        let state = self.state(py, outcome)?;
+        lent.give_back(py)?;
+        Ok(state)
     }
 
     /// Resume after a yield or a reset with `value`, converted by the type of the
@@ -357,16 +419,29 @@ impl VM {
     ///
     /// Returns `Yielded`, `Finished` or `Reset`. Raises `keleusma.VMError` if there is
     /// nothing to resume, for example before `call` or after `Finished`.
+    ///
+    /// `shared` follows the same rule as in `call`.
+    #[pyo3(signature = (value, *, shared = None))]
     fn resume<'py>(
         &mut self,
         py: Python<'py>,
         value: &Bound<'py, PyAny>,
+        shared: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.check_usable()?;
+        let mut lent = self.lend(shared)?;
         let ty = declared(&self.signature()?.resume, "resume")?;
         let input = to_value(value, ty)?;
-        let outcome = self.vm.resume(input);
-        self.state(py, outcome)
+        let outcome = self.vm.resume_with_shared(lent.bytes(), input);
+        let state = self.state(py, outcome)?;
+        lent.give_back(py)?;
+        Ok(state)
+    }
+
+    /// The size in bytes of the module's shared `data` block, zero if it has none.
+    #[getter]
+    fn shared_data_bytes(&self) -> usize {
+        self.vm.shared_data_bytes()
     }
 
     /// Drive the VM through Python's generator protocol, yielding each `Yielded` and
@@ -374,17 +449,19 @@ impl VM {
     /// or from `send`. The semantics, including the meaning of `Reset`, are
     /// documented in `keleusma._stream`, which implements the generator, because a
     /// generator is far simpler to write and to read in Python than through PyO3.
-    #[pyo3(signature = (*args, inputs = None))]
+    #[pyo3(signature = (*args, inputs = None, shared = None))]
     fn stream<'py>(
         slf: Bound<'py, Self>,
         args: &Bound<'py, PyTuple>,
         inputs: Option<Bound<'py, PyAny>>,
+        shared: Option<Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         let mut positional = vec![slf.into_any()];
         positional.extend(args.iter());
         let keywords = PyDict::new(py);
         keywords.set_item("inputs", inputs)?;
+        keywords.set_item("shared", shared)?;
         py.import("keleusma._stream")?
             .getattr("stream")?
             .call(PyTuple::new(py, positional)?, Some(&keywords))
@@ -424,6 +501,22 @@ impl VM {
             )));
         }
         Ok(())
+    }
+
+    /// Check `shared` against the module's shared block and copy it in. See [`Lent`].
+    fn lend(&self, shared: Option<&Bound<'_, PyAny>>) -> PyResult<Lent> {
+        let size = self.vm.shared_data_bytes();
+        match (size, shared) {
+            (0, None) => Ok(Lent::none()),
+            (0, Some(_)) => Err(PyTypeError::new_err(
+                "the module declares no shared `data` block, so `shared` must be omitted",
+            )),
+            (size, None) => Err(PyTypeError::new_err(format!(
+                "the module declares a shared `data` block of {size} bytes; pass \
+                 `shared=` a writable buffer of that size, such as a bytearray"
+            ))),
+            (size, Some(object)) => Lent::new(object, size),
+        }
     }
 
     fn bounds_of(&self, name: &str) -> PyResult<(u32, u32)> {

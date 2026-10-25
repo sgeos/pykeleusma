@@ -12,10 +12,41 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 ## Status
 
 **Early development.** The repository was cut on 2026-10-24 and builds against the
-published Keleusma 0.2.2 from crates.io. Compiling a script, building a verified VM,
-calling and resuming it, streaming it as a generator, and Python natives work. Runnable
-examples are in `examples/`. The full statement of the guarantee boundary and a release
-are still to come, as the first milestone lists.
+published Keleusma 0.2.2 from crates.io. Compiling, verified construction, calling,
+resuming, streaming, value conversion, Python natives and shared data work, and three
+examples run in tests. The first milestone is in
+[`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design in
+[`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md). Nothing is
+published to PyPI yet.
+
+## What is guaranteed, and what is not
+
+Keleusma proves an upper bound on the time and memory of a script before it runs. That
+bound covers **the script, and the bounds declared for each native**. It never covers
+Python.
+
+- **Python code is outside every bound.** That includes a Python callable registered as
+  a native, the binding's conversion of values, and anything the host does between
+  calls. A native can run for any time and allocate any memory.
+- **A native's declared bounds are promises, not limits.** The `wcet` and `wcmu_bytes`
+  given for a native are attestations the host makes and Keleusma trusts. Keleusma uses
+  them to size the arena and to compute `vm.wcet_per_iteration`, but Python does not
+  obey them. A script that calls a Python native has a worst case only for its own part.
+- **The figures are in Keleusma's units.** `vm.wcet_per_iteration` is the worst case of
+  one iteration of a `loop main` in Keleusma's nominal cost units, which are not cycles
+  or seconds. `vm.arena_capacity` is the arena's size in bytes.
+- **Two limits are empirical in this release.** The arena includes a margin for a
+  shortfall in Keleusma 0.2.2's own sizing, measured rather than proven, and composite
+  arguments and native results draw on a budget the host chooses, `argument_bytes`.
+  The binding also rejects a class of mistyped yields that Keleusma 0.2.2 accepts and
+  that could crash a read, but it cannot check every expression. The design document
+  records the evidence and the limits.
+
+What the binding does guarantee is that failures surface as Python exceptions. A
+verification failure raises `VerifyError`, a runtime fault raises `VMError` and marks
+the VM `failed`, and a native's own exception reaches the caller unchanged.
+
+## Using it
 
 ```python
 import keleusma
@@ -39,29 +70,25 @@ stream.resume(10)  # keleusma.Reset(), the end of one iteration
 stream.resume(20)  # keleusma.Yielded(40), the start of the next
 ```
 
-Values convert by the types `main` declares. `Word` and `Byte` become `int`, `bool`
-stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become `tuple`,
-arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact `Fraction` that
-remembers its width. Out-of-range integers raise `OverflowError` instead of wrapping.
-After a runtime error a VM reports `failed` and refuses further use, because Keleusma
-leaves its state undefined. Private data fields start as `()`, not zero, so assign one
-before reading it. A module with a shared `data` block is refused, because the binding
-does not yet lend it the host buffer Keleusma requires.
-
-For scheduling, `vm.wcet_per_iteration` gives the worst-case time of one iteration of a
-`loop main` in Keleusma's nominal cost units, which are not cycles or seconds, and
-`vm.arena_capacity` gives the arena's size in bytes. Both cover the script and the
-declared bounds of natives only, never Python or the binding's conversions.
-
-**Natives are outside the guarantee.** A Python callable registered as a native has no
-time or memory bound. The `wcet` and `wcmu_bytes` you declare for it are attestations
-Keleusma trusts and uses for sizing, not limits Python obeys. A native's exception
-reaches the caller of `call` or `resume` unchanged.
-
-A VM reserves `argument_bytes`, 4096 by default, of its arena for composite arguments
-such as tuples carrying text. A host that passes larger values gives a larger figure. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
-and the planned interface in
-[`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
+- **Values** convert by the types `main` declares. `Word` and `Byte` become `int`,
+  `bool` stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become
+  `tuple`, arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact
+  `Fraction` that remembers its width. Out-of-range integers raise `OverflowError`
+  instead of wrapping.
+- **Streams.** `vm.stream(*args, inputs=...)` drives a VM as a generator. A `loop main`
+  reports `Reset` after each iteration, and the next input starts the next one.
+- **Natives** are passed as `keleusma.VM(module, natives={"host::f": f})`, or as
+  `keleusma.Native(f, wcet=..., wcmu_bytes=...)` to declare bounds, which size the
+  arena or are refused.
+- **State.** Private data fields start as `()`, not zero, so assign one before reading
+  it. A shared `data` block is lent as a host buffer on each call, as in
+  `vm.call(x, shared=buffer)` with a `bytearray` of `vm.shared_data_bytes` bytes, and the
+  script's changes are copied back after a successful call.
+- **Arena budget.** A VM reserves `argument_bytes`, 4096 by default, of its arena for
+  composite arguments such as tuples carrying text. A host that passes larger values
+  gives a larger figure.
+- **After a runtime error** a VM reports `failed` and refuses further use, because
+  Keleusma leaves its state undefined. Build a new one.
 
 ```python
 import keleusma

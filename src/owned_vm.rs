@@ -238,8 +238,27 @@ impl OwnedVm {
     ///
     /// The returned state may hold an arena-resident composite, which is valid only
     /// until the next call or resume on this VM, so callers must convert it first.
+    #[cfg(test)]
     pub fn call(&mut self, args: &[Value]) -> Result<VmState, VmError> {
-        self.cell.with_dependent_mut(|_arena, vm| vm.call(args))
+        self.call_with_shared(&mut [], args)
+    }
+
+    /// [`Self::call`], lending `shared` as the module's shared data block for the
+    /// duration of the call. Keleusma requires it to be exactly the block's size, or
+    /// empty for a module without one.
+    pub fn call_with_shared(
+        &mut self,
+        shared: &mut [u8],
+        args: &[Value],
+    ) -> Result<VmState, VmError> {
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.call_with_shared(shared, args))
+    }
+
+    /// The size in bytes of the module's shared data block, zero if it has none.
+    pub fn shared_data_bytes(&self) -> usize {
+        self.cell
+            .with_dependent(|_arena, vm| vm.shared_data_bytes())
     }
 
     /// Keleusma's worst-case execution time for one stream iteration, in its nominal
@@ -276,8 +295,19 @@ impl OwnedVm {
     }
 
     /// Resume after a yield or a reset, with the same validity rule as [`Self::call`].
+    #[cfg(test)]
     pub fn resume(&mut self, input: Value) -> Result<VmState, VmError> {
-        self.cell.with_dependent_mut(|_arena, vm| vm.resume(input))
+        self.resume_with_shared(&mut [], input)
+    }
+
+    /// [`Self::resume`], lending `shared` as in [`Self::call_with_shared`].
+    pub fn resume_with_shared(
+        &mut self,
+        shared: &mut [u8],
+        input: Value,
+    ) -> Result<VmState, VmError> {
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.resume_with_shared(shared, input))
     }
 }
 
