@@ -4,31 +4,41 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, a FreeBSD job and a lighter CI load
+## 2026-10-25, GitHub configuration at parity, and README badges
 
-**Asked.** The operator asked for a FreeBSD job, then approved this line's proposal
-to the admin session's CI load review, recommendation included.
+**Asked.** Configure the GitHub repository sensibly, at parity with the Keleusma and
+angelssword-adventurers-creator repositories where that makes sense, with badges in
+the README.
 
-**Done.**
-- **FreeBSD.** `ci.yml` builds the source distribution, installs it in a FreeBSD 15.1
-  virtual machine through `vmactions/freebsd-vm`, pinned to its v1.5.9 commit, and runs
-  the tests there. PyPI accepts no FreeBSD wheels, so this is a FreeBSD user's path.
-- **Load.** A pull request runs Linux 3.12 and 3.15, Windows 3.12, 3.14t and Miri, and
-  a `plan` job that chooses one quick Linux wheel, or the full 24 when packaging paths
-  change. A push to `main`, a manual run and the `full-ci` label run everything. The CI
-  test matrix is capped at 3 parallel jobs and the wheel builds at 4. Documentation
-  alone runs nothing, except `README.md`, which tests check. A typical source-only pull
-  request goes from 21 jobs to 7. The publish job, its environment, its tag check and
-  its file count are unchanged, and GitHub's documentation confirms that path filters
-  are not evaluated for tag pushes.
+**Done, repository settings.** Applied through the GitHub interface, not tracked.
+- Topics, and a description naming the bounds. Merged branches are deleted. The unused
+  wiki and projects are off. All three repositories match on these, and on merge
+  methods, Actions permissions and secret scanning, which were already alike.
+- Private vulnerability reporting and Dependabot vulnerability alerts are on, as in
+  both references. Dependabot security updates stay off, as in both.
+- A ruleset named Protect main, copied from angelssword-adventurers-creator, blocks
+  force-pushes to and deletion of `main`.
+- Five merged feature branches left on the remote were deleted, after checking that
+  each is contained in `main`.
 
-**Deviation from the proposal.** The proposal counted 6 jobs. Making `wheels.yml`
-reusable would have let a caller without `id-token: write` fail the publish job's
-validation, so the choice moved into a small `plan` job, the seventh.
+**Done, files.** Badges for CI, wheels, PyPI, the Python floor, the Keleusma pin, the
+license and the status, with a test for the static ones. Issue templates, a contact
+link configuration and a pull request checklist, modelled on Keleusma's and smaller.
 
-**Changed rule.** `main` is kept green rather than always green. A failure on `main`
-after a merge is fixed before other work, and `CLAUDE.md` records this.
+**Not copied, deliberately.**
+- Keleusma's required linear history, which would forbid this repository's merge
+  commits.
+- Required status checks, which would leave a pull request blocked whenever path
+  filters skip a workflow.
+- GitHub Pages, which Keleusma uses for its book. This binding's documentation lives in
+  the repository.
+- Required sign-off on web commits, which angelssword has and Keleusma does not.
 
-**Verification.** actionlint passes. The plan job's path rule was tested locally on
-sample file lists. The first full run of the new workflows is this pull request's,
-under the `full-ci` label.
+**Flagged.** The PyPI badge reads "package not found" until the first release. The
+homepage field still points at the Keleusma repository, and could point at the PyPI
+page after release, which is the operator's choice.
+
+**Verification.** 411 Python tests pass locally, including the new badge test, which a
+stale badge was shown to fail. Pull request 25's full run under `full-ci` passed every
+job, FreeBSD with 409 tests and 1 skip. This pull request is the first to exercise the
+reduced set and the quick wheel.

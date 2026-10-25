@@ -16,8 +16,8 @@ publishes is the operator's, and an agent prepares the release only up to the ta
    environment `pypi`, add the operator as a required reviewer, and restrict its
    deployments to tags matching `v*`. Without the environment, GitHub would create it
    on the first tag with no protection, and the publish job would run unapproved.
-3. **Private vulnerability reporting.** Enable it under the repository's security
-   settings, because `SECURITY.md` directs reports there.
+3. **Private vulnerability reporting.** Enabled on 2026-10-25, because `SECURITY.md`
+   directs reports there. Nothing remains to do.
 
 ## Each release
 
