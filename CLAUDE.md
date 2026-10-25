@@ -12,8 +12,9 @@ time and memory use. The goal is to run Keleusma scripts inside Python programs,
 PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and the import
 package is `keleusma`.
 
-**Status.** Seed, cut on 2026-10-24. The extension builds against the published Keleusma
-0.2.2 and exposes version information only. The first milestone is
+**Status.** Cut on 2026-10-24. The extension builds against the published Keleusma 0.2.2.
+Task 1 of the first milestone, owning the arena and the VM together, is done, and the
+public package still exposes version information only. The first milestone is
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design is
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
 
@@ -75,9 +76,13 @@ uv run ruff check . && uv run ruff format --check .
 uv run pyright                                # strict type checks
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+cargo test                                    # Rust unit tests
+MIRIFLAGS=-Zmiri-tree-borrows CARGO_TARGET_DIR=target/miri cargo +nightly miri test --lib
 ```
 
-`uv sync` rebuilds the extension when Rust sources change. After editing `src/lib.rs`, keep
+`uv sync` rebuilds the extension when Rust sources change, through the `cache-keys` in
+`pyproject.toml`. Miri runs under Tree Borrows because of the dependency issue recorded
+in the design document. After editing `src/lib.rs`, keep
 `python/keleusma/_keleusma.pyi` in step, because pyright reads the stub, not the binary.
 
 ## Before Trusting a Green Run
@@ -87,10 +92,18 @@ cargo clippy --all-targets -- -D warnings
 - **Count what was reached.** A suite that collected zero tests, or skipped them all, passes.
   Check the count in the summary line.
 
+## Scratch and Secret Directories
+
+`tmp/` is project-local scratch for drafts, commit messages, probe outputs and scratch
+scripts. Its contents are ignored and only `tmp/.gitkeep` is tracked. `secret/` holds
+local material that is never committed, such as credentials, and is ignored whole. Both
+follow the Keleusma repository.
+
 ## Coding Conventions
 
 - **Rust.** Edition 2024. Every fallible path returns a `PyResult`, and no panic crosses into
-  Python. Convert Keleusma errors to Python exceptions that keep the source line and column.
+  Python, with the single recorded exception of PyO3's own `unsendable` thread check,
+  described in the design document. Convert Keleusma errors to Python exceptions that keep the source line and column.
   Never use `Vm::new_unchecked` to admit a module that verification rejects.
 - **Python.** Typed throughout, checked by pyright in strict mode and ruff. The public
   interface lives in `python/keleusma/`.

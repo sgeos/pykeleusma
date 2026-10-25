@@ -11,9 +11,10 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 ## Status
 
-**Seed only.** The repository was cut on 2026-10-24. The extension builds, links the
-published Keleusma 0.2.2 from crates.io, and exposes version information. No script
-can run yet. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
+**Early development.** The repository was cut on 2026-10-24. The extension builds, links
+the published Keleusma 0.2.2 from crates.io, and exposes version information. The
+internal ownership of a VM and its memory arena is in place and tested, but no public
+interface can run a script yet. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
 and the planned interface in
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
 

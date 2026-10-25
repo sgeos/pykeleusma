@@ -28,6 +28,16 @@ Keleusma = "https://github.com/sgeos/keleusma"
 [dependency-groups]
 dev = ["maturin==1.15.0", "pytest==9.1.1", "ruff==0.17.2", "pyright==1.1.414"]
 
+[tool.uv]
+# uv reinstalls the project only when one of these changes. Without the Rust
+# sources listed, `uv sync` keeps a stale extension after an edit to src/.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+]
+
 [tool.maturin]
 python-source = "python"
 module-name = "keleusma._keleusma"
