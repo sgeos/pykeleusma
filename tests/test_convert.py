@@ -3,12 +3,8 @@
 Round trips go through a stream that yields its argument back, and through scripts
 that build composites themselves, because only the latter make Keleusma produce the
 flat byte bodies that the binding decodes by type. The shapes include every one in
-the probe recorded for Dromon. Values pass through the private `VM._call` hook until
-roadmap task 5 adds `call`.
+the probe recorded for Dromon.
 """
-
-# The call hook is private on purpose, until task 5 replaces it with `call`.
-# pyright: reportPrivateUsage=false
 
 from fractions import Fraction
 
@@ -20,13 +16,13 @@ import keleusma
 def _echo(declared: str, value: object, budget: int = 4096) -> object:
     source = f"loop main(e: {declared}) -> {declared} {{ let n = yield e; n }}"
     vm = keleusma.VM(keleusma.compile(source), argument_bytes=budget)
-    state, result = vm._call(value)
-    assert state == "yielded"
-    return result
+    state = vm.call(value)
+    assert isinstance(state, keleusma.Yielded)
+    return state.value
 
 
-def _run(source: str, *args: object) -> tuple[str, object]:
-    return keleusma.VM(keleusma.compile(source))._call(*args)
+def _run(source: str, *args: object) -> keleusma.State:
+    return keleusma.VM(keleusma.compile(source)).call(*args)
 
 
 @pytest.mark.parametrize(
@@ -82,9 +78,8 @@ def test_a_built_text_pair_decodes() -> None:
     source = (
         'loop main(e: (Text, Text)) -> (Text, Text) { let n = yield ("send", e.1); n }'
     )
-    assert _run(source, ("tokens", "hello from host")) == (
-        "yielded",
-        ("send", "hello from host"),
+    assert _run(source, ("tokens", "hello from host")) == keleusma.Yielded(
+        ("send", "hello from host")
     )
 
 
@@ -93,8 +88,8 @@ def test_a_built_fixed_arity_action_decodes() -> None:
         "loop main(e: Word) -> (Text, Word, Text) "
         '{ if e > 0 { yield ("send", 7, "x") } else { yield ("wake", 3, "") } }'
     )
-    assert _run(source, 0) == ("yielded", ("wake", 3, ""))
-    assert _run(source, 1) == ("yielded", ("send", 7, "x"))
+    assert _run(source, 0) == keleusma.Yielded(("wake", 3, ""))
+    assert _run(source, 1) == keleusma.Yielded(("send", 7, "x"))
 
 
 def test_a_built_array_of_actions_decodes() -> None:
@@ -102,14 +97,14 @@ def test_a_built_array_of_actions_decodes() -> None:
         "loop main(e: Word) -> [(Text, Word); 2] "
         '{ yield [("wake", e), ("end_turn", 0)] }'
     )
-    assert _run(source, 5) == ("yielded", [("wake", 5), ("end_turn", 0)])
+    assert _run(source, 5) == keleusma.Yielded([("wake", 5), ("end_turn", 0)])
 
 
 def test_a_built_nested_composite_decodes() -> None:
     source = (
         'fn main(w: Word) -> ((Word, Text), [bool; 2]) { ((w, "n"), [true, false]) }'
     )
-    assert _run(source, 9) == ("finished", ((9, "n"), [True, False]))
+    assert _run(source, 9) == keleusma.Finished(((9, "n"), [True, False]))
 
 
 def test_a_host_tag_compares_equal_to_a_literal() -> None:
@@ -117,13 +112,13 @@ def test_a_host_tag_compares_equal_to_a_literal() -> None:
         "loop main(e: (Text, Text)) -> Word "
         '{ if e.0 == "tokens" { yield 1 } else { yield 0 } }'
     )
-    assert _run(source, ("tokens", "x")) == ("yielded", 1)
-    assert _run(source, ("wake", "x")) == ("yielded", 0)
+    assert _run(source, ("tokens", "x")) == keleusma.Yielded(1)
+    assert _run(source, ("wake", "x")) == keleusma.Yielded(0)
 
 
 def test_several_arguments_convert_in_order() -> None:
     source = "fn main(a: Word, b: Text) -> (Text, Word) { (b, a + 1) }"
-    assert _run(source, 41, "x") == ("finished", ("x", 42))
+    assert _run(source, 41, "x") == keleusma.Finished(("x", 42))
 
 
 @pytest.mark.parametrize(
@@ -193,9 +188,7 @@ def test_any_exact_number_converts_into_a_fixed() -> None:
 
 def test_fixed_arithmetic_in_the_script_is_exact() -> None:
     source = "loop main(e: Fixed<16>) -> Fixed<16> { yield e + e }"
-    state, result = _run(source, Fraction(3, 4))
-    assert state == "yielded"
-    assert result == Fraction(3, 2)
+    assert _run(source, Fraction(3, 4)) == keleusma.Yielded(Fraction(3, 2))
 
 
 def test_an_inexact_fixed_is_refused_rather_than_rounded() -> None:
@@ -213,7 +206,7 @@ def test_tuple_arguments_convert_in_a_loop() -> None:
         "loop main(e: (Text, Fixed<8>)) -> (Text, Fixed<8>) "
         "{ let n = yield (e.0, e.1 + e.1); n }"
     )
-    assert _run(source, ("half", Fraction(1, 2))) == ("yielded", ("half", 1))
+    assert _run(source, ("half", Fraction(1, 2))) == keleusma.Yielded(("half", 1))
 
 
 # Values that must be refused.
@@ -263,14 +256,14 @@ def test_a_value_of_the_wrong_type_raises_type_error(
 def test_the_wrong_number_of_arguments_raises_type_error() -> None:
     vm = keleusma.VM(keleusma.compile("fn main(a: Word, b: Word) -> Word { a + b }"))
     with pytest.raises(TypeError, match="takes 2 argument"):
-        vm._call(1)
+        vm.call(1)
 
 
 def test_an_unsupported_parameter_type_names_the_type() -> None:
     source = "struct P { x: Word }\nfn main(p: P) -> Word { p.x }"
     vm = keleusma.VM(keleusma.compile(source))
     with pytest.raises(TypeError, match="named type `P`"):
-        vm._call(1)
+        vm.call(1)
 
 
 def test_an_argument_larger_than_the_budget_raises_vm_error() -> None:
@@ -282,5 +275,5 @@ def test_a_failed_conversion_leaves_the_vm_usable() -> None:
     source = "loop main(e: Word) -> Word { let n = yield e; n }"
     vm = keleusma.VM(keleusma.compile(source))
     with pytest.raises(TypeError):
-        vm._call("not a word")
-    assert vm._call(5) == ("yielded", 5)
+        vm.call("not a word")
+    assert vm.call(5) == keleusma.Yielded(5)

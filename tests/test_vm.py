@@ -7,8 +7,8 @@ because driving a stream from Python needs `call` and `resume`, which arrive wit
 5. Those Rust tests also run under Miri, except the two long runs.
 """
 
-# The live counter and the temporary call hook are private on purpose, because
-# neither is public interface, and these tests are their only intended users.
+# The live counter is private on purpose, because it is not public interface, and
+# these tests are its only intended users.
 # pyright: reportPrivateUsage=false
 
 import resource
@@ -24,7 +24,7 @@ ANSWER = keleusma.compile("fn main() -> Word { 40 + 2 }")
 
 def test_a_vm_constructs_and_runs() -> None:
     vm = keleusma.VM(ANSWER)
-    assert vm._call() == ("finished", 42)
+    assert vm.call() == keleusma.Finished(42)
     assert "arena" in repr(vm)
 
 
@@ -32,7 +32,7 @@ def test_one_module_builds_many_vms() -> None:
     # The VM takes a copy of the module, so the Python module stays usable.
     first = keleusma.VM(ANSWER)
     second = keleusma.VM(ANSWER)
-    assert first._call() == second._call() == ("finished", 42)
+    assert first.call() == second.call() == keleusma.Finished(42)
 
 
 def test_the_arena_includes_the_argument_budget() -> None:
@@ -101,7 +101,7 @@ def test_a_vm_with_private_data_runs_and_drops() -> None:
     )
     before = _live_vm_count()
     vm = keleusma.VM(module)
-    assert vm._call() == ("finished", 7)
+    assert vm.call() == keleusma.Finished(7)
     del vm
     assert _live_vm_count() == before
 
@@ -130,12 +130,12 @@ def test_memory_does_not_grow_with_the_number_of_vms_dropped() -> None:
     # control's 20,000 live VMs small.
     count = 20_000
     for _ in range(1_000):  # Warm the allocator so its first growth is not counted.
-        keleusma.VM(ANSWER, argument_bytes=0)._call()
+        keleusma.VM(ANSWER, argument_bytes=0).call()
 
     start = _peak_rss()
     for _ in range(count):
         vm = keleusma.VM(ANSWER, argument_bytes=0)
-        vm._call()
+        vm.call()
         del vm
     dropped_growth = _peak_rss() - start
 
@@ -154,7 +154,7 @@ def test_a_runtime_fault_raises_vm_error_and_leaves_the_vm_droppable() -> None:
     before = _live_vm_count()
     vm = keleusma.VM(keleusma.compile("fn main() -> Word { 1 / 0 }"))
     with pytest.raises(keleusma.VMError, match="DivisionByZero") as caught:
-        vm._call()
+        vm.call()
     assert isinstance(caught.value, RuntimeError)
     del vm
     assert _live_vm_count() == before
@@ -171,7 +171,7 @@ def test_another_thread_cannot_use_the_vm() -> None:
 
     def use() -> None:
         try:
-            vm._call()
+            vm.call()
         except BaseException as error:
             errors.append(error)
 
@@ -182,21 +182,21 @@ def test_another_thread_cannot_use_the_vm() -> None:
     assert type(errors[0]).__name__ == "PanicException"
     assert not isinstance(errors[0], Exception)
     assert "unsendable" in str(errors[0])
-    assert vm._call() == ("finished", 42)
+    assert vm.call() == keleusma.Finished(42)
 
 
 def test_a_vm_created_on_a_worker_thread_runs_there() -> None:
     # The supported threading model. A VM belongs to the thread that creates it, so
     # concurrent programs give each VM a dedicated thread and create it there. The
     # module itself may be shared, because Module is immutable.
-    results: list[tuple[str, object]] = []
+    results: list[keleusma.State] = []
     errors: list[BaseException] = []
 
     def own_and_use() -> None:
         try:
             vm = keleusma.VM(ANSWER)
-            results.append(vm._call())
-            results.append(vm._call())
+            results.append(vm.call())
+            results.append(vm.call())
         except BaseException as error:
             errors.append(error)
 
@@ -206,4 +206,4 @@ def test_a_vm_created_on_a_worker_thread_runs_there() -> None:
     for thread in threads:
         thread.join()
     assert errors == []
-    assert results == [("finished", 42)] * 8
+    assert results == [keleusma.Finished(42)] * 8

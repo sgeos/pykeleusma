@@ -133,6 +133,13 @@ pub struct EntrySignature {
     pub params: Vec<Declared>,
     /// The return type, which is also the type of every yielded value.
     pub ret: Declared,
+    /// The type of the value `resume` passes in.
+    ///
+    /// Keleusma's verifier records that a stream resumes with its single parameter's
+    /// type, and a `yield main` was observed to behave the same way. The VM does not
+    /// check a resumed value's type at all, which was also observed, so this
+    /// declaration is the only check and is unsupported wherever it is not certain.
+    pub resume: Declared,
 }
 
 /// The kind of entry point, mirroring Keleusma's `FunctionCategory`.
@@ -152,13 +159,13 @@ impl EntrySignature {
     pub fn from_program(program: &Program, default_frac_bits: u8) -> Option<Self> {
         let mut heads = program.functions.iter().filter(|f| f.name == "main");
         let first = heads.next()?;
-        let signature_of = |f: &keleusma::ast::FunctionDef| EntrySignature {
-            category: match f.category {
+        let signature_of = |f: &keleusma::ast::FunctionDef| {
+            let category = match f.category {
                 FunctionCategory::Fn => Category::Fn,
                 FunctionCategory::Yield => Category::Yield,
                 FunctionCategory::Loop => Category::Loop,
-            },
-            params: f
+            };
+            let params: Vec<Declared> = f
                 .params
                 .iter()
                 .map(|p| match &p.type_expr {
@@ -167,8 +174,23 @@ impl EntrySignature {
                         "a parameter without a declared type".to_string(),
                     )),
                 })
-                .collect(),
-            ret: resolve(&f.return_type, default_frac_bits),
+                .collect();
+            let resume = match (category, params.as_slice()) {
+                (Category::Fn, _) => Err(Unsupported(
+                    "no resume value, because a `fn main` cannot be resumed".to_string(),
+                )),
+                (_, [only]) => only.clone(),
+                (_, others) => Err(Unsupported(format!(
+                    "no single resume type, because `main` has {} parameters",
+                    others.len()
+                ))),
+            };
+            EntrySignature {
+                category,
+                params,
+                ret: resolve(&f.return_type, default_frac_bits),
+                resume,
+            }
         };
         let signature = signature_of(first);
         if heads.any(|other| signature_of(other) != signature) {
@@ -181,6 +203,7 @@ impl EntrySignature {
                 category: signature.category,
                 params: signature.params.iter().map(|_| mixed()).collect(),
                 ret: mixed(),
+                resume: mixed(),
             });
         }
         Some(signature)
@@ -220,6 +243,21 @@ mod tests {
             ]))]
         );
         assert_eq!(s.ret, Ok(Ty::Unit));
+        assert_eq!(s.resume, s.params[0]);
+    }
+
+    #[test]
+    fn only_a_single_parameter_coroutine_has_a_resume_type() {
+        assert_eq!(
+            signature("yield main(e: Text) -> Word { 1 }").resume,
+            Ok(Ty::Text)
+        );
+        assert!(signature("fn main(e: Word) -> Word { e }").resume.is_err());
+        assert!(
+            signature("yield main(a: Word, b: Word) -> Word { a }")
+                .resume
+                .is_err()
+        );
     }
 
     #[test]
