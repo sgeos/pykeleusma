@@ -188,6 +188,7 @@ wheels = [
 
 [[package]]
 name = "pykeleusma"
+version = "0.2.2.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

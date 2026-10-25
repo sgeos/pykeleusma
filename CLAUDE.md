@@ -12,7 +12,7 @@ time and memory use. The goal is to run Keleusma scripts inside Python programs,
 PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and the import
 package is `keleusma`.
 
-**Status.** Cut on 2026-10-24. Version 0.1.0 builds against the published Keleusma 0.2.2,
+**Status.** Cut on 2026-10-24. Version 0.2.2.0 builds against the published Keleusma 0.2.2,
 and tasks 1 to 14 of the first milestone are done. The binding covers what the Keleusma
 book describes, except what is blocked on Keleusma. CI tests Linux, macOS and Windows,
 and wheels are built but not published. The milestone is
@@ -23,7 +23,8 @@ and wheels are built but not published. The milestone is
 
 **Relationship to Keleusma.** This repository depends only on the crates.io release, pinned
 exactly as `keleusma = "=0.2.2"`. Never build against a Keleusma checkout and never edit
-the Keleusma repository. Moving to a later release is a deliberate change, because
+the Keleusma repository. The binding's version is that release with a fourth part counting binding releases, held in
+`pyproject.toml` because Cargo admits only three parts. Moving to a later release is a deliberate change, because
 Keleusma 0.2.3 changes `BYTECODE_VERSION` from 1 to 2. Calls that 0.2.3 changes live in
 `src/compat.rs`, and every 0.2.2 workaround is marked `KELEUSMA-0.2.2`. Questions about
 Keleusma go to the Keleusma lines through the mailbox described in

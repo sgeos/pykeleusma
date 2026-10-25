@@ -14,6 +14,21 @@ def test_the_extension_imports_and_reports_versions() -> None:
     assert isinstance(keleusma.BYTECODE_VERSION, int)
 
 
+def test_the_version_is_the_keleusma_release_and_a_binding_revision() -> None:
+    # Both sides are derived. The version is read from the installed distribution
+    # and from pyproject.toml, and must extend the Keleusma version in the wheel.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert keleusma.__version__ == project["project"]["version"]
+    release, _, revision = keleusma.__version__.rpartition(".")
+    assert release == keleusma.KELEUSMA_VERSION
+    assert revision.isdigit()
+
+
+def test_cargo_carries_the_first_three_parts_of_the_version() -> None:
+    manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    assert manifest["package"]["version"] == keleusma.KELEUSMA_VERSION
+
+
 def test_the_stated_keleusma_version_matches_the_cargo_pin() -> None:
     # Both sides are derived. The pin is read from Cargo.toml and the stated value
     # from the built extension, so an upgrade that changes only one fails here.

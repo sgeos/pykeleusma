@@ -6,7 +6,10 @@ build-backend = "maturin"
 # The distribution follows the py-prefix convention of wrappers such as pygit2,
 # pyzmq and pycairo. The import package is plain `keleusma`.
 name = "pykeleusma"
-dynamic = ["version"]
+# The first three parts are the Keleusma release the binding is built against, and
+# the fourth counts binding releases against it. Cargo admits only three parts, so
+# this is the authoritative version and Cargo.toml carries the first three.
+version = "0.2.2.0"
 description = "Python bindings for the Keleusma scripting language"
 readme = "README.md"
 license = "0BSD"

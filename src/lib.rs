@@ -58,7 +58,6 @@ fn _live_vm_count() -> usize {
 
 #[pymodule]
 fn _keleusma(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add("KELEUSMA_VERSION", KELEUSMA_VERSION)?;
     // Read from the linked crate rather than restated, so the value describes the
     // runtime that is actually in the wheel.
