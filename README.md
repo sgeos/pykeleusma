@@ -175,7 +175,7 @@ iteration, as the example explains.
 
 ## Interface at a glance
 
-Every part of this sketch is implemented, as the target for version 0.1.0.
+Every part of this sketch is implemented, as the target for the first milestone.
 
 ```python
 import keleusma

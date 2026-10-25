@@ -1,6 +1,8 @@
 [package]
 name = "pykeleusma"
-version = "0.1.0"
+# The Python distribution's version in pyproject.toml is authoritative. Cargo admits
+# only three parts, so this carries the Keleusma release the binding is built against.
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Python bindings for the Keleusma scripting language"

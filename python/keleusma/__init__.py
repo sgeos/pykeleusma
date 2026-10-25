@@ -10,6 +10,8 @@ with bounds that Keleusma trusts but Python cannot honour. The planned interface
 docs/architecture/BINDING_DESIGN.md.
 """
 
+from importlib.metadata import version as _distribution_version
+
 from keleusma._errors import (
     CompileError,
     KeleusmaError,
@@ -32,13 +34,16 @@ from keleusma._keleusma import (
     OP_NAMES,
     VM,
     Module,
-    __version__,
     library_signatures,
     load_module,
     compile,  # Like re.compile, it shadows the builtin only inside this package.
     encryption_public_key,
     signing_public_key,
 )
+
+# Read from the installed distribution, because pyproject.toml holds the version and
+# Cargo cannot carry its four parts.
+__version__ = _distribution_version("pykeleusma")
 
 __all__ = [
     "BYTECODE_VERSION",

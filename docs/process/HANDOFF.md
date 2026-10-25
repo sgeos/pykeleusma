@@ -18,7 +18,8 @@ completed, moved or abandoned.
   `use external` natives run, and the yield guard covers values with no recorded type.
   `vm.step` advances one iteration per call, `vm.arena_peak_bytes` shows arena use, and
   `vm.private_data` reads private fields.
-  The version is 0.1.0.
+- **Version.** 0.2.2.0, the Keleusma release it bridges with a fourth part counting
+  binding releases. It lives in `pyproject.toml`, because Cargo admits only three parts.
 - **Migration.** `docs/architecture/MIGRATION_V0_2_3.md` is the plan. `src/compat.rs`
   holds the changed calls, `src/canaries.rs` pins 0.2.2 behaviours, and every
   workaround carries `KELEUSMA-0.2.2`.
@@ -34,7 +35,7 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 ## Next step
 
 Wait for Keleusma 0.2.3 to be published, with `keleusma-wire`, then follow the
-migration plan. Publishing 0.1.0 to PyPI is the operator's decision.
+migration plan. Publishing 0.2.2.0 to PyPI is the operator's decision.
 
 ## Open
 

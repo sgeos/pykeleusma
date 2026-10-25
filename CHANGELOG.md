@@ -5,6 +5,14 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The version is now 0.2.2.0. The first three parts name the Keleusma release the
+  binding is built against, and the fourth counts binding releases against it. The
+  version lives in `pyproject.toml`, because Cargo admits only three parts, and
+  `keleusma.__version__` reads it from the installed distribution. The first
+  milestone keeps its name, version 0.1.0, in the roadmap.
+
 ### Added
 
 - The open items of task 13 that the binding could close, roadmap task 14. Natives

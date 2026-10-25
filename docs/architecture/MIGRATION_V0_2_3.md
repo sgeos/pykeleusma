@@ -31,7 +31,9 @@ confirmed against the published release.
 1. Confirm that `keleusma` 0.2.3 and its new dependency `keleusma-wire` are published
    to crates.io. Inference. The binding cannot pin 0.2.3 until both are.
 2. On a branch, change the pin in `Cargo.toml`, run `cargo update -p keleusma`, and
-   rebuild with `uv sync`.
+   rebuild with `uv sync`. Set the package version in `Cargo.toml` to 0.2.3 and the
+   version in `pyproject.toml` to 0.2.3.0, which `tests/test_smoke.py` checks against
+   the linked release.
 3. Fix the compile errors, which the survey expects only in `src/compat.rs`, items 2
    and 3, and in the shared offset read, item 10.
 4. Run `cargo test`. Work through each failing canary by its item below.

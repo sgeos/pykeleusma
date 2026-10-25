@@ -6,7 +6,6 @@ from typing import final
 from keleusma._native import Native
 from keleusma._state import Finished, Reset, Yielded
 
-__version__: str
 KELEUSMA_VERSION: str
 BYTECODE_VERSION: int
 DEFAULT_ARGUMENT_BYTES: int
