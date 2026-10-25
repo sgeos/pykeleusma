@@ -214,6 +214,11 @@ impl OwnedVm {
         self.cell.borrow_owner().capacity()
     }
 
+    /// The arena, for reading a result that lives in it.
+    pub fn arena(&self) -> &Arena {
+        self.cell.borrow_owner()
+    }
+
     /// How the capacity was made up.
     pub fn plan(&self) -> ArenaPlan {
         self.plan

@@ -18,30 +18,52 @@
 //! default span, whose line is 0. A line of 0 therefore means that no location is
 //! known, and the exception reports `None` for both line and column.
 
+use keleusma::ast::Program;
 use keleusma::bytecode::Module as KeleusmaModule;
 use keleusma::compiler::compile as keleusma_compile;
 use keleusma::lexer::tokenize;
 use keleusma::parser::parse;
+use keleusma::target::Target;
 use keleusma::token::Span;
 use pyo3::prelude::*;
+
+use crate::convert::Widths;
+use crate::types::EntrySignature;
+use crate::yield_check;
 
 pyo3::import_exception!(keleusma._errors, LexError);
 pyo3::import_exception!(keleusma._errors, ParseError);
 pyo3::import_exception!(keleusma._errors, CompileError);
 
-/// A compiled Keleusma module.
+/// A compiled Keleusma module, with the declared types at its entry point.
 ///
 /// Immutable from Python. `frozen` is sound because `keleusma::bytecode::Module` is
 /// `Send` and `Sync`, which the compiler checks for every `#[pyclass(frozen)]`.
 #[pyclass(frozen, module = "keleusma._keleusma", name = "Module")]
 pub struct Module {
     inner: KeleusmaModule,
+    boundary: Boundary,
+}
+
+/// What value conversion needs to know about a module, kept from compilation
+/// because the compiled module no longer holds the declared types.
+#[derive(Debug, Clone)]
+pub struct Boundary {
+    /// The types of `main`, or `None` if the program has no `main`.
+    pub signature: Option<EntrySignature>,
+    /// The scalar widths flat bodies are packed with.
+    pub widths: Widths,
 }
 
 impl Module {
     /// The compiled module, for constructing a VM from it.
     pub fn inner(&self) -> &KeleusmaModule {
         &self.inner
+    }
+
+    /// The entry point's declared types and the module's widths.
+    pub fn boundary(&self) -> &Boundary {
+        &self.boundary
     }
 }
 
@@ -100,7 +122,7 @@ fn location(source: &str, span: Span) -> (Option<u32>, Option<u32>) {
     }
 }
 
-fn run_pipeline(source: &str) -> Result<KeleusmaModule, StageError> {
+fn run_pipeline(source: &str) -> Result<(KeleusmaModule, Program), StageError> {
     let tokens = tokenize(source).map_err(|e| StageError {
         stage: Stage::Lex,
         message: e.message,
@@ -111,11 +133,28 @@ fn run_pipeline(source: &str) -> Result<KeleusmaModule, StageError> {
         message: e.message,
         span: e.span,
     })?;
-    keleusma_compile(&program).map_err(|e| StageError {
+    let module = keleusma_compile(&program).map_err(|e| StageError {
         stage: Stage::Compile,
         message: e.message,
         span: e.span,
-    })
+    })?;
+    // Keleusma accepts some mistyped yields, which could crash a later read, so the
+    // binding checks them itself. See `yield_check` for the reasoning and the limits.
+    match yield_check::check(&program, Target::host()) {
+        Ok(None) => Ok((module, program)),
+        Ok(Some(mismatch)) => Err(StageError {
+            stage: Stage::Compile,
+            message: mismatch.message,
+            span: mismatch.span,
+        }),
+        // The re-check repeats steps that just succeeded inside the compiler, so a
+        // failure means the two have diverged. Failing closed keeps the guarantee.
+        Err(message) => Err(StageError {
+            stage: Stage::Compile,
+            message: format!("the binding could not re-check this program's yields: {message}"),
+            span: Span::default(),
+        }),
+    }
 }
 
 fn to_py_err(source: &str, error: StageError) -> PyErr {
@@ -128,22 +167,26 @@ fn to_py_err(source: &str, error: StageError) -> PyErr {
     }
 }
 
-/// Compile source text, for callers inside the extension.
-///
-/// Releases the GIL while Keleusma compiles, because compilation time is not bounded
-/// by Keleusma's guarantees and other Python threads should keep running meanwhile.
-pub fn compile_source(py: Python<'_>, source: &str) -> PyResult<KeleusmaModule> {
-    py.detach(|| run_pipeline(source))
-        .map_err(|error| to_py_err(source, error))
-}
-
 /// Compile Keleusma source text into a module.
 ///
 /// Raises `keleusma.LexError`, `keleusma.ParseError` or `keleusma.CompileError`, each a
 /// `keleusma.SourceError` carrying `msg`, `lineno` and `colno`.
+///
+/// Releases the GIL while Keleusma compiles, because compilation time is not bounded
+/// by Keleusma's guarantees and other Python threads should keep running meanwhile.
 #[pyfunction]
 pub fn compile(py: Python<'_>, source: &str) -> PyResult<Module> {
-    compile_source(py, source).map(|inner| Module { inner })
+    let (inner, program) = py
+        .detach(|| run_pipeline(source))
+        .map_err(|error| to_py_err(source, error))?;
+    // `keleusma::compiler::compile` targets the host, so a bare `Fixed` takes the
+    // host's default fraction bits, as the type checker substitutes them.
+    let default_frac_bits = Target::host().fixed_default_frac_bits();
+    let boundary = Boundary {
+        signature: EntrySignature::from_program(&program, default_frac_bits),
+        widths: Widths::of(&inner),
+    };
+    Ok(Module { inner, boundary })
 }
 
 #[cfg(test)]

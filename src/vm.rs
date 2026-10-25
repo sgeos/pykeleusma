@@ -11,13 +11,15 @@
 //! | The capacity overflows `usize` | `OverflowError` |
 //! | The persistent region does not fit | `RuntimeError`, which would be a binding defect |
 
-use keleusma::bytecode::Value;
 use keleusma::vm::{VmError, VmState};
 use pyo3::exceptions::{PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
-use crate::compile::Module;
+use crate::compile::{Boundary, Module};
+use crate::convert::{ReadContext, to_py, to_value};
 use crate::owned_vm::{OwnedVm, OwnedVmError};
+use crate::types::{Declared, Ty};
 
 pyo3::import_exception!(keleusma._errors, VerifyError);
 pyo3::import_exception!(keleusma._errors, VMError);
@@ -43,16 +45,11 @@ fn construction_error(error: OwnedVmError) -> PyErr {
     }
 }
 
-/// Convert the scalar results the temporary test hook needs. Task 4 replaces this
-/// with full conversion, so anything else is refused rather than guessed at.
-fn scalar_result(value: &Value) -> PyResult<Option<i64>> {
-    match value {
-        Value::Unit => Ok(None),
-        Value::Int(n) => Ok(Some(*n)),
-        other => Err(PyTypeError::new_err(format!(
-            "value conversion is not implemented yet for {other:?}"
-        ))),
-    }
+/// The declared type, or the `TypeError` that explains why it cannot be converted.
+fn declared<'a>(declared: &'a Declared, role: &str) -> PyResult<&'a Ty> {
+    declared
+        .as_ref()
+        .map_err(|unsupported| PyTypeError::new_err(format!("{role} has {}", unsupported.0)))
 }
 
 /// A verified Keleusma VM that owns its arena.
@@ -63,6 +60,7 @@ fn scalar_result(value: &Value) -> PyResult<Option<i64>> {
 #[pyclass(unsendable, module = "keleusma._keleusma", name = "VM")]
 pub struct VM {
     vm: OwnedVm,
+    boundary: Boundary,
 }
 
 #[pymethods]
@@ -74,7 +72,10 @@ impl VM {
         // stays usable for further VMs.
         let vm =
             OwnedVm::new(module.inner().clone(), argument_bytes).map_err(construction_error)?;
-        Ok(Self { vm })
+        Ok(Self {
+            vm,
+            boundary: module.boundary().clone(),
+        })
     }
 
     /// The arena's total capacity in bytes.
@@ -96,17 +97,53 @@ impl VM {
         )
     }
 
-    /// Call the entry point with no arguments, returning the state name and an integer
-    /// or `None`. A temporary hook for tests, removed when task 5 adds `call`.
-    fn _call_no_args(&mut self) -> PyResult<(&'static str, Option<i64>)> {
-        let state = self.vm.call(&[]).map_err(|e| vm_error(&e))?;
-        match state {
-            VmState::Yielded(value) => Ok(("yielded", scalar_result(&value)?)),
-            VmState::Finished(value) => Ok(("finished", scalar_result(&value)?)),
-            VmState::Reset => Ok(("reset", None)),
-            VmState::BreakpointHit { .. } => Err(PyRuntimeError::new_err(
-                "a breakpoint was hit, but the binding arms none",
-            )),
+    /// Call the entry point, converting the arguments and the result by the declared
+    /// types. Returns the state name and the converted value, or `None` for a reset.
+    /// A temporary hook for tests, replaced by `call` in roadmap task 5.
+    #[pyo3(signature = (*args))]
+    fn _call<'py>(
+        &mut self,
+        py: Python<'py>,
+        args: &Bound<'py, PyTuple>,
+    ) -> PyResult<(&'static str, Bound<'py, PyAny>)> {
+        let signature = self
+            .boundary
+            .signature
+            .as_ref()
+            .ok_or_else(|| PyTypeError::new_err("the module has no `main`"))?;
+        if args.len() != signature.params.len() {
+            return Err(PyTypeError::new_err(format!(
+                "main takes {} argument(s), got {}",
+                signature.params.len(),
+                args.len()
+            )));
         }
+        let values = args
+            .iter()
+            .zip(&signature.params)
+            .enumerate()
+            .map(|(index, (arg, param))| {
+                let ty = declared(param, &format!("argument {}", index + 1))?;
+                to_value(&arg, ty)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let state = self.vm.call(&values).map_err(|e| vm_error(&e))?;
+        // Convert before anything else runs on this VM, while a flat result is valid.
+        let ctx = ReadContext {
+            arena: self.vm.arena(),
+            widths: self.boundary.widths,
+        };
+        let (name, value) = match state {
+            VmState::Yielded(value) => ("yielded", value),
+            VmState::Finished(value) => ("finished", value),
+            VmState::Reset => return Ok(("reset", py.None().into_bound(py))),
+            VmState::BreakpointHit { .. } => {
+                return Err(PyRuntimeError::new_err(
+                    "a breakpoint was hit, but the binding arms none",
+                ));
+            }
+        };
+        let ty = declared(&signature.ret, "the result")?;
+        Ok((name, to_py(py, &value, ty, &ctx)?))
     }
 }

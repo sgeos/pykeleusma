@@ -29,6 +29,12 @@ except keleusma.SourceError as error:  # LexError, ParseError or CompileError
 vm = keleusma.VM(module)  # raises keleusma.VerifyError if the verifier rejects it
 ```
 
+Values convert by the types `main` declares. `Word` and `Byte` become `int`, `bool`
+stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become `tuple`,
+arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact `Fraction` that
+remembers its width. Out-of-range integers raise `OverflowError` instead of wrapping.
+Calling a VM from Python arrives with roadmap task 5.
+
 A VM reserves `argument_bytes`, 4096 by default, of its arena for composite arguments
 such as tuples carrying text. A host that passes larger values gives a larger figure. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
 and the planned interface in

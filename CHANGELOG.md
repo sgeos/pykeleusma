@@ -7,6 +7,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Value conversion by the entry point's declared types, covering `()`, `bool`, `Byte`,
+  `Word`, `Float`, `Text`, `Fixed<N>`, tuples and arrays, and `keleusma.Fixed`, an exact
+  `Fraction` subclass carrying its fraction bits.
+- A compile-time check that every yield matches the declared return type, because
+  Keleusma 0.2.2 accepts some mistyped yields that crash a later read.
+
 - `keleusma.VM(module, *, argument_bytes=4096)`, a verified VM that owns an arena sized
   to survive `Reset` and to hold composite arguments, with `arena_capacity` and
   `argument_bytes` properties. The exceptions `VerifyError` and `VMError`, and the

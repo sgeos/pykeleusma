@@ -4,31 +4,34 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, task 3
+## 2026-10-25, task 4
 
-**Goal.** Complete task 3, then commit, push and merge all work.
+**Goal.** Complete task 4, then commit, push and merge all work.
 
-**Done.** `keleusma.VM(module, *, argument_bytes=4096)` replaces `_OwnedVmProbe`. It
-verifies the module, raising `VerifyError` with the verifier's message, which names the
-chunk and the failure. Other Keleusma errors raise `VMError`. The arena is the sum of
-Keleusma's footprint, the persistent region, twice the working set as a regrowth
-margin, and a host-chosen argument budget. `vm.arena_capacity` and `vm.argument_bytes`
-report it.
+**Done.** Values convert between Python and Keleusma by the declared types of `main`,
+which `keleusma.compile` now keeps from the parsed program. Flat composites are read at
+offsets from Keleusma's own `LayoutDescriptor`, which the compiler also uses. Fixed-point
+values become `keleusma.Fixed`, a `fractions.Fraction` subclass that remembers its
+fraction bits, so `float(value)` works and round trips are exact. Out-of-range integers
+and bytes raise `OverflowError`, and wrong types raise `TypeError`.
 
-**Why the margin.** `v0.2.3` has not answered how a host should size the arena, beyond
-calling a margin a workaround. Measurements on seven scripts showed that the shortfall
-after a `Reset` is one doubling of the operand stack, which the margin covers with at
-least 48 bytes to spare. Composite arguments cost about twice their text length and
-accumulate across the yields of one iteration, so they need a budget the host chooses.
+**Found on the way, a memory-safety defect in Keleusma 0.2.2.** Its compiler and
+verifier accept a yield whose value has the wrong type. When the wrong type has the same
+size as the declared one, Keleusma's safe `Vm::decode` dereferences an integer as a text
+pointer and the process segfaults. This reproduces in plain Rust with no binding code.
+It was reported to `v0.2.3` as `pykeleusma-20261025-yield-soundness`. The binding now
+re-runs Keleusma's type inference after compiling and rejects any yield whose inferred
+type differs from the declared one, as a `CompileError` pointing at the value.
 
-**Verification.** 34 Python tests and 15 Rust tests passed locally, including seven
-word streams and one tuple stream run for 10,000 iterations in an automatically sized
-arena. A mutation that removed the margin made the word-stream tests fail. Miri under
-Tree Borrows passed 13 tests and skipped the two long runs by design. `ruff`, `pyright`,
-`cargo fmt` and `cargo clippy` were clean.
+**Verification.** 123 Python tests and 25 Rust tests passed locally, on Python 3.12.
+Round trips cover every shape in the Dromon probe, including composites the script
+builds, which are the flat ones. Two mutations confirmed the tests can fail. Reading
+every field at offset zero crashed the interpreter, and disabling the guard made the
+three mistyped-yield tests fail. Miri under Tree Borrows passed 23 Rust tests and
+skipped the two long runs by design. `ruff`, `pyright`, `cargo fmt` and `cargo clippy`
+were clean.
 
-**Not proven.** The margin is empirical. A script that needs two regrowths would exceed
-it, and none was found. The 10,000-iteration test runs in Rust, because Python cannot
-drive a stream until task 5.
+**Not proven.** The guard compares only expressions that Keleusma records a type for. No
+crash was found past it, but only a fix in Keleusma's type checker closes the gap.
 
-**Next.** Task 4, value conversion by declared type.
+**Next.** Task 5, `vm.call` and `vm.resume`, replacing the private `VM._call` hook.
