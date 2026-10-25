@@ -7,6 +7,16 @@ KELEUSMA_VERSION: str
 BYTECODE_VERSION: int
 
 @final
+class Module:
+    """A compiled Keleusma module. Immutable."""
+
+def compile(source: str) -> Module:
+    """Compile Keleusma source text into a module.
+
+    Raises `keleusma.LexError`, `keleusma.ParseError` or `keleusma.CompileError`.
+    """
+
+@final
 class _OwnedVmProbe:
     """A VM owned together with its arena. Temporary, removed in roadmap task 3."""
 

@@ -1,17 +1,15 @@
 //! Python bindings for the Keleusma scripting language.
 //!
 //! The binding is planned in `docs/architecture/BINDING_DESIGN.md`, and the first
-//! milestone in `docs/roadmap/V0_1_0.md`. Task 1 of that milestone, owning the arena
-//! and the VM together, lives in [`owned_vm`]. The `_OwnedVmProbe` class below exists
-//! only to exercise that ownership from Python, and is removed when `keleusma.VM`
-//! replaces it in task 3.
+//! milestone in `docs/roadmap/V0_1_0.md`. Task 1, owning the arena and the VM together,
+//! lives in [`owned_vm`], and task 2, compilation, in [`compile`]. The `_OwnedVmProbe`
+//! class below exists only to exercise the ownership from Python, and is removed when
+//! `keleusma.VM` replaces it in task 3.
 
+mod compile;
 mod owned_vm;
 
-use keleusma::bytecode::{Module, Value};
-use keleusma::compiler::compile;
-use keleusma::lexer::tokenize;
-use keleusma::parser::parse;
+use keleusma::bytecode::Value;
 use keleusma::vm::VmState;
 use pyo3::exceptions::{PyMemoryError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -23,32 +21,6 @@ use crate::owned_vm::{OwnedVm, OwnedVmError};
 /// `tests/test_smoke.py` reads the pin from `Cargo.toml` and compares, so the two
 /// cannot drift silently.
 const KELEUSMA_VERSION: &str = "0.2.2";
-
-/// Compile source text into a module.
-///
-/// Temporary. Task 2 replaces this with `keleusma.compile` and dedicated exception
-/// classes that carry the line and column. Until then each stage reports a
-/// `ValueError` whose message names the stage and the location.
-fn compile_source(source: &str) -> PyResult<Module> {
-    let tokens = tokenize(source).map_err(|e| {
-        PyValueError::new_err(format!(
-            "lex error at {}:{}: {}",
-            e.span.line, e.span.column, e.message
-        ))
-    })?;
-    let program = parse(&tokens).map_err(|e| {
-        PyValueError::new_err(format!(
-            "parse error at {}:{}: {}",
-            e.span.line, e.span.column, e.message
-        ))
-    })?;
-    compile(&program).map_err(|e| {
-        PyValueError::new_err(format!(
-            "compile error at {}:{}: {}",
-            e.span.line, e.span.column, e.message
-        ))
-    })
-}
 
 fn owned_vm_error(error: OwnedVmError) -> PyErr {
     match error {
@@ -85,8 +57,8 @@ struct OwnedVmProbe {
 #[pymethods]
 impl OwnedVmProbe {
     #[new]
-    fn new(source: &str) -> PyResult<Self> {
-        let module = compile_source(source)?;
+    fn new(py: Python<'_>, source: &str) -> PyResult<Self> {
+        let module = compile::compile_source(py, source)?;
         let vm = OwnedVm::new(module).map_err(owned_vm_error)?;
         Ok(Self { vm })
     }
@@ -128,6 +100,8 @@ fn _keleusma(module: &Bound<'_, PyModule>) -> PyResult<()> {
     // Read from the linked crate rather than restated, so the value describes the
     // runtime that is actually in the wheel.
     module.add("BYTECODE_VERSION", keleusma::bytecode::BYTECODE_VERSION)?;
+    module.add_class::<compile::Module>()?;
+    module.add_function(wrap_pyfunction!(compile::compile, module)?)?;
     module.add_class::<OwnedVmProbe>()?;
     module.add_function(wrap_pyfunction!(_live_vm_count, module)?)?;
     Ok(())

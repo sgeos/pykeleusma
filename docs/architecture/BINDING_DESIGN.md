@@ -29,11 +29,38 @@ serves every later Python. maturin builds it.
 | `vm.resume(value)` | `Vm::resume(Value)` |
 | `vm.stream(*args)` | A Python generator over `call` and then `resume` while the state is `Yielded` |
 | Result kinds | `VmState::Yielded`, `Finished`, `Reset`, and a breakpoint state the binding does not expose in 0.1.0 |
-| Exceptions | `LexError`, `ParseError`, `CompileError`, each with a `Span` of `line` and `column`, and `VmError`, which has a `category()` |
+| Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, which has a `category()` |
 
 `Vm` is `GenericVm<'a, 'arena, i64, u64, f64>` and `Value` is `GenericValue<i64, f64>`.
 The `'a` lifetime belongs to the bytecode store and borrows input bytes only for
 zero-copy loading. A VM built from an owned `Module` can take `'static` there.
+
+## Compilation and source errors
+
+**Implemented on 2026-10-25, roadmap task 2.** `keleusma.compile(source)` runs
+Keleusma's pipeline in `src/compile.rs` with the GIL released, and returns an immutable
+`keleusma.Module`, which may be shared between threads because Keleusma's `Module` is
+`Send` and `Sync`.
+
+| Python | Raised when |
+|---|---|
+| `KeleusmaError` | Base class for every error the package raises |
+| `SourceError(KeleusmaError, ValueError)` | Base class for rejected source, with `msg`, `lineno` and `colno` |
+| `LexError`, `ParseError`, `CompileError` | The lexer, parser or compiler rejected the source |
+
+- **Why Python classes.** The classes live in `python/keleusma/_errors.py`, because a
+  source error derives from both `KeleusmaError` and `ValueError`, which PyO3's
+  exception macros cannot express. The attribute names and the `ValueError` base follow
+  `json.JSONDecodeError`, the standard library's precedent for a located input error.
+- **Columns.** Keleusma's column counts bytes. The binding converts it to a character
+  column from the source text, so a column after non-ASCII text matches what a Python
+  editor shows. If the span does not fit the source, the byte column is kept rather than
+  failing while reporting a failure.
+- **Unknown location.** Keleusma uses line 0 for synthesised types, and the binding then
+  reports `None` for both line and column.
+- **Not covered.** No test shows that the GIL is released during compilation. Keleusma
+  does not bound compilation time, so a very large source still takes as long as it
+  takes, but other threads keep running.
 
 ## Risk 1, the VM borrows its arena
 
