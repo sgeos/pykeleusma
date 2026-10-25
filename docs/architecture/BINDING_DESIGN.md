@@ -25,10 +25,10 @@ serves every later Python. maturin builds it.
 | `keleusma.compile(source)` | `lexer::tokenize`, then `parser::parse`, then `compiler::compile`, the pipeline `examples/piano_roll.rs` uses |
 | `keleusma.VM(module)` | `Arena::try_with_capacity` sized as described under Arena sizing, then `Vm::new(module, &arena)`, which verifies the module |
 | `vm.register(name, callable)` | `Vm::register_native_closure(name, func)`, where `func` is `Fn(&[Value]) -> Result<Value, VmError> + 'static` |
-| `vm.call(*args)` | `Vm::call(&[Value])`, returning a `VmState` |
-| `vm.resume(value)` | `Vm::resume(Value)` |
+| `vm.call(*args)` | `Vm::call(&[Value])`, returning a `VmState`, implemented as described under Calling and resuming |
+| `vm.resume(value)` | `Vm::resume(Value)`, implemented likewise |
 | `vm.stream(*args)` | A Python generator over `call` and then `resume` while the state is `Yielded` |
-| Result kinds | `VmState::Yielded`, `Finished`, `Reset`, and a breakpoint state the binding does not expose in 0.1.0 |
+| Result kinds | `keleusma.Yielded`, `Finished` and `Reset` for `VmState::Yielded`, `Finished` and `Reset`. The breakpoint state is not exposed, because the binding arms no breakpoints |
 | Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, raised as `VerifyError` or `VMError` as described under Arena sizing |
 
 `Vm` is `GenericVm<'a, 'arena, i64, u64, f64>` and `Value` is `GenericValue<i64, f64>`.
@@ -176,6 +176,39 @@ module's worst-case memory use, so it must be known when the arena is sized.
   Keleusma stores an opaque as an index into a registry on the VM, not as the
   `Arc<dyn HostOpaque>` fat pointer itself, so its arena cost is one word. Opaques are
   outside 0.1.0 in any case.
+
+## Calling and resuming, roadmap task 5
+
+**Implemented on 2026-10-25.** `vm.call(*args)` converts each argument by its declared
+parameter type, and `vm.resume(value)` converts the value by the type of the stream's
+single parameter. Both return a frozen dataclass from `python/keleusma/_state.py`,
+`Yielded(value)`, `Finished(value)` or `Reset()`, so a host compares results with `==`
+or takes them apart with `match`.
+
+**Facts, observed on Keleusma 0.2.2.**
+
+- A `yield main` yields, resumes and then returns `Finished`. Resuming after that returns
+  `NotSuspended`.
+- A `loop main` returns `Reset` on the resume that completes an iteration. The next
+  resume starts a new iteration with that value as its argument. It never finishes.
+- A `fn main` returns `Finished` from `call` and cannot be resumed.
+- The VM does not check a resumed value's type. A string resumed into a `Word` stream was
+  accepted and returned as the result. The binding's conversion by the parameter type is
+  therefore the only check, which is why a resume type is modelled only for an entry
+  point with exactly one parameter, matching the verifier's record that a stream resumes
+  with its single parameter's type.
+
+**After a runtime error.** Keleusma's execution model says a runtime error during `call`
+or `resume` leaves the VM in an undefined intermediate state. The binding sets
+`vm.failed` and refuses every later `call` or `resume` with `VMError`. A conversion
+error, raised before the VM is entered, and `NotSuspended`, which Keleusma returns before
+changing anything, leave the VM usable. Recovery through Keleusma's
+`Vm::reset_after_error` is possible future work.
+
+**Evidence.** A coroutine that yields three values runs to completion. 1,000 VMs built
+from one module on one thread are each resumed in turn over four ticks. A stream with
+tuple arguments runs 10,000 iterations from Python. A mutation that stopped marking a
+failed VM made both failure tests fail.
 
 ## Values, roadmap task 4
 

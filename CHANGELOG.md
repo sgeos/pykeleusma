@@ -7,6 +7,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `vm.call(*args)` and `vm.resume(value)`, returning the frozen dataclasses
+  `keleusma.Yielded`, `Finished` and `Reset`, and `vm.failed`, set after a runtime error
+  leaves the VM's state undefined. They replace the private `VM._call` test hook.
+
 - Value conversion by the entry point's declared types, covering `()`, `bool`, `Byte`,
   `Word`, `Float`, `Text`, `Fixed<N>`, tuples and arrays, and `keleusma.Fixed`, an exact
   `Fraction` subclass carrying its fraction bits.

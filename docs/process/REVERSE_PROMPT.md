@@ -4,34 +4,29 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, task 4
+## 2026-10-25, task 5
 
-**Goal.** Complete task 4, then commit, push and merge all work.
+**Goal.** Complete task 5, then commit, push and merge all work.
 
-**Done.** Values convert between Python and Keleusma by the declared types of `main`,
-which `keleusma.compile` now keeps from the parsed program. Flat composites are read at
-offsets from Keleusma's own `LayoutDescriptor`, which the compiler also uses. Fixed-point
-values become `keleusma.Fixed`, a `fractions.Fraction` subclass that remembers its
-fraction bits, so `float(value)` works and round trips are exact. Out-of-range integers
-and bytes raise `OverflowError`, and wrong types raise `TypeError`.
+**Done.** `vm.call(*args)` and `vm.resume(value)` replace the private test hook. They
+convert values by the declared types and return frozen dataclasses, `Yielded(value)`,
+`Finished(value)` or `Reset()`, which work with `==` and `match`.
 
-**Found on the way, a memory-safety defect in Keleusma 0.2.2.** Its compiler and
-verifier accept a yield whose value has the wrong type. When the wrong type has the same
-size as the declared one, Keleusma's safe `Vm::decode` dereferences an integer as a text
-pointer and the process segfaults. This reproduces in plain Rust with no binding code.
-It was reported to `v0.2.3` as `pykeleusma-20261025-yield-soundness`. The binding now
-re-runs Keleusma's type inference after compiling and rejects any yield whose inferred
-type differs from the declared one, as a `CompileError` pointing at the value.
+**Facts observed on Keleusma 0.2.2.** A `yield main` finishes after its last yield. A
+`loop main` returns `Reset` on the resume that completes an iteration, and the next
+resume starts another. The VM does not check a resumed value's type, so the binding's
+conversion by the single parameter's type is the only check. Keleusma documents the
+state after a runtime error as undefined, so the binding marks such a VM `failed` and
+refuses further use. A conversion error and `NotSuspended` leave it usable.
 
-**Verification.** 123 Python tests and 25 Rust tests passed locally, on Python 3.12.
-Round trips cover every shape in the Dromon probe, including composites the script
-builds, which are the flat ones. Two mutations confirmed the tests can fail. Reading
-every field at offset zero crashed the interpreter, and disabling the guard made the
-three mistyped-yield tests fail. Miri under Tree Borrows passed 23 Rust tests and
-skipped the two long runs by design. `ruff`, `pyright`, `cargo fmt` and `cargo clippy`
+**Verification.** 137 Python tests and 26 Rust tests passed locally. They include a
+coroutine that yields three values and finishes, 1,000 VMs on one thread each resumed
+in turn, and 10,000 stream iterations with tuple arguments driven from Python. A
+mutation that stopped marking failed VMs made both failure tests fail. The README
+example was run and its comments hold. `ruff`, `pyright`, `cargo fmt` and `cargo clippy`
 were clean.
 
-**Not proven.** The guard compares only expressions that Keleusma records a type for. No
-crash was found past it, but only a fix in Keleusma's type checker closes the gap.
+**Not covered.** Recovering a failed VM through Keleusma's `Vm::reset_after_error` is
+not offered. A failed VM must be replaced.
 
-**Next.** Task 5, `vm.call` and `vm.resume`, replacing the private `VM._call` hook.
+**Next.** Task 5b, the worst-case time figure, then task 6, `vm.stream`.

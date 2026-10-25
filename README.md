@@ -11,10 +11,10 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 ## Status
 
-**Early development.** The repository was cut on 2026-10-24. The extension builds, links
-the published Keleusma 0.2.2 from crates.io, and exposes version information. The
-internal ownership of a VM and its memory arena is in place and tested, but no public
-interface can run a script yet. Compilation and verified construction work.
+**Early development.** The repository was cut on 2026-10-24 and builds against the
+published Keleusma 0.2.2 from crates.io. Compiling a script, building a verified VM,
+and calling and resuming it work. Streaming as a generator, Python natives and the
+examples are still to come, as the first milestone lists.
 
 ```python
 import keleusma
@@ -27,13 +27,23 @@ except keleusma.SourceError as error:  # LexError, ParseError or CompileError
     print(error.msg, error.lineno, error.colno)  # unexpected character '$' 1 21
 
 vm = keleusma.VM(module)  # raises keleusma.VerifyError if the verifier rejects it
+assert vm.call() == keleusma.Finished(42)
+
+doubler = keleusma.compile("loop main(e: Word) -> Word { let n = yield e * 2; n }")
+stream = keleusma.VM(doubler)
+match stream.call(1):
+    case keleusma.Yielded(value):  # 2
+        print(value)
+stream.resume(10)  # keleusma.Reset(), the end of one iteration
+stream.resume(20)  # keleusma.Yielded(40), the start of the next
 ```
 
 Values convert by the types `main` declares. `Word` and `Byte` become `int`, `bool`
 stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become `tuple`,
 arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact `Fraction` that
 remembers its width. Out-of-range integers raise `OverflowError` instead of wrapping.
-Calling a VM from Python arrives with roadmap task 5.
+After a runtime error a VM reports `failed` and refuses further use, because Keleusma
+leaves its state undefined.
 
 A VM reserves `argument_bytes`, 4096 by default, of its arena for composite arguments
 such as tuples carrying text. A host that passes larger values gives a larger figure. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
@@ -49,7 +59,7 @@ keleusma.BYTECODE_VERSION  # 1, read from the linked runtime
 
 ## Planned interface
 
-Not implemented beyond `compile` and `VM`. This is the target for version 0.1.0.
+Implemented except `stream` and `register`. This is the target for version 0.1.0.
 
 ```python
 import keleusma

@@ -1,7 +1,18 @@
-//! Roadmap task 3. `keleusma.VM(module)`, a verified VM with its own arena.
+//! Roadmap tasks 3 and 5. `keleusma.VM(module)`, a verified VM with its own arena, and
+//! its `call` and `resume`.
 //!
 //! The ownership and the arena sizing live in [`crate::owned_vm`]. This module is the
-//! Python face of it, and maps construction failures onto Python exceptions.
+//! Python face of it, maps failures onto Python exceptions, and converts values by the
+//! declared types through [`crate::convert`].
+//!
+//! # After a runtime error
+//!
+//! Keleusma's execution model states that a runtime error during `call` or `resume`
+//! leaves the VM "in an undefined intermediate state". The binding therefore marks the
+//! VM unusable after any such error, and every later `call` or `resume` raises
+//! `keleusma.VMError`. Two kinds of failure leave it usable, because nothing ran. A
+//! conversion error is raised before the VM is entered, and `NotSuspended`, a resume
+//! with nothing to resume, is returned by Keleusma before it changes anything.
 //!
 //! | Failure | Python exception |
 //! |---|---|
@@ -19,7 +30,7 @@ use pyo3::types::PyTuple;
 use crate::compile::{Boundary, Module};
 use crate::convert::{ReadContext, to_py, to_value};
 use crate::owned_vm::{OwnedVm, OwnedVmError};
-use crate::types::{Declared, Ty};
+use crate::types::{Declared, EntrySignature, Ty};
 
 pyo3::import_exception!(keleusma._errors, VerifyError);
 pyo3::import_exception!(keleusma._errors, VMError);
@@ -61,6 +72,8 @@ fn declared<'a>(declared: &'a Declared, role: &str) -> PyResult<&'a Ty> {
 pub struct VM {
     vm: OwnedVm,
     boundary: Boundary,
+    /// Set by a runtime error, after which the VM's state is undefined.
+    failed: bool,
 }
 
 #[pymethods]
@@ -75,6 +88,7 @@ impl VM {
         Ok(Self {
             vm,
             boundary: module.boundary().clone(),
+            failed: false,
         })
     }
 
@@ -97,20 +111,18 @@ impl VM {
         )
     }
 
-    /// Call the entry point, converting the arguments and the result by the declared
-    /// types. Returns the state name and the converted value, or `None` for a reset.
-    /// A temporary hook for tests, replaced by `call` in roadmap task 5.
+    /// Call the entry point with `args`, converted by the declared parameter types.
+    ///
+    /// Returns `Yielded`, `Finished` or `Reset`, with the value converted by the
+    /// declared return type.
     #[pyo3(signature = (*args))]
-    fn _call<'py>(
+    fn call<'py>(
         &mut self,
         py: Python<'py>,
         args: &Bound<'py, PyTuple>,
-    ) -> PyResult<(&'static str, Bound<'py, PyAny>)> {
-        let signature = self
-            .boundary
-            .signature
-            .as_ref()
-            .ok_or_else(|| PyTypeError::new_err("the module has no `main`"))?;
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.check_usable()?;
+        let signature = self.signature()?;
         if args.len() != signature.params.len() {
             return Err(PyTypeError::new_err(format!(
                 "main takes {} argument(s), got {}",
@@ -127,23 +139,84 @@ impl VM {
                 to_value(&arg, ty)
             })
             .collect::<PyResult<Vec<_>>>()?;
-        let state = self.vm.call(&values).map_err(|e| vm_error(&e))?;
-        // Convert before anything else runs on this VM, while a flat result is valid.
-        let ctx = ReadContext {
-            arena: self.vm.arena(),
-            widths: self.boundary.widths,
+        let outcome = self.vm.call(&values);
+        self.state(py, outcome)
+    }
+
+    /// Resume after a yield or a reset with `value`, converted by the type of the
+    /// stream's parameter.
+    ///
+    /// Returns `Yielded`, `Finished` or `Reset`. Raises `keleusma.VMError` if there is
+    /// nothing to resume, for example before `call` or after `Finished`.
+    fn resume<'py>(
+        &mut self,
+        py: Python<'py>,
+        value: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.check_usable()?;
+        let ty = declared(&self.signature()?.resume, "resume")?;
+        let input = to_value(value, ty)?;
+        let outcome = self.vm.resume(input);
+        self.state(py, outcome)
+    }
+
+    /// Whether an earlier runtime error has made this VM unusable.
+    #[getter]
+    fn failed(&self) -> bool {
+        self.failed
+    }
+}
+
+impl VM {
+    fn signature(&self) -> PyResult<&EntrySignature> {
+        self.boundary
+            .signature
+            .as_ref()
+            .ok_or_else(|| PyTypeError::new_err("the module has no `main`"))
+    }
+
+    fn check_usable(&self) -> PyResult<()> {
+        if self.failed {
+            return Err(VMError::new_err(
+                "this VM failed earlier and its state is undefined; build a new VM",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Turn the outcome of a call or resume into a Python state object, converting
+    /// the value before anything else runs on this VM, while a flat result is valid.
+    fn state<'py>(
+        &mut self,
+        py: Python<'py>,
+        outcome: Result<VmState, VmError>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let state = match outcome {
+            Ok(state) => state,
+            Err(VmError::NotSuspended) => return Err(vm_error(&VmError::NotSuspended)),
+            Err(error) => {
+                self.failed = true;
+                return Err(vm_error(&error));
+            }
         };
-        let (name, value) = match state {
-            VmState::Yielded(value) => ("yielded", value),
-            VmState::Finished(value) => ("finished", value),
-            VmState::Reset => return Ok(("reset", py.None().into_bound(py))),
+        let states = py.import("keleusma._state")?;
+        let (class, value) = match state {
+            VmState::Yielded(value) => ("Yielded", value),
+            VmState::Finished(value) => ("Finished", value),
+            VmState::Reset => return states.getattr("Reset")?.call0(),
             VmState::BreakpointHit { .. } => {
+                self.failed = true;
                 return Err(PyRuntimeError::new_err(
                     "a breakpoint was hit, but the binding arms none",
                 ));
             }
         };
-        let ty = declared(&signature.ret, "the result")?;
-        Ok((name, to_py(py, &value, ty, &ctx)?))
+        let ty = declared(&self.signature()?.ret, "the result")?;
+        let ctx = ReadContext {
+            arena: self.vm.arena(),
+            widths: self.boundary.widths,
+        };
+        let converted = to_py(py, &value, ty, &ctx)?;
+        states.getattr(class)?.call1((converted,))
     }
 }

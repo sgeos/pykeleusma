@@ -233,13 +233,6 @@ impl OwnedVm {
     }
 
     /// Resume after a yield or a reset, with the same validity rule as [`Self::call`].
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the Python resume method arrives with roadmap task 5"
-        )
-    )]
     pub fn resume(&mut self, input: Value) -> Result<VmState, VmError> {
         self.cell.with_dependent_mut(|_arena, vm| vm.resume(input))
     }
