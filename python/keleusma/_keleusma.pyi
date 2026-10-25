@@ -1,6 +1,6 @@
 """Type stub for the compiled extension module."""
 
-from collections.abc import Buffer, Callable, Generator, Iterable, Mapping
+from collections.abc import Buffer, Callable, Generator, Iterable, Mapping, Sequence
 from typing import final
 
 from keleusma._native import Native
@@ -15,11 +15,32 @@ DEFAULT_ARGUMENT_BYTES: int
 class Module:
     """A compiled Keleusma module. Immutable."""
 
+    def to_bytes(self) -> bytes: ...
+    def to_signed_bytes(
+        self, signing_seed: bytes, *, recipient_key: bytes | None = None
+    ) -> bytes: ...
+    @property
+    def is_signed(self) -> bool: ...
+    @property
+    def has_declared_types(self) -> bool: ...
+
 def compile(source: str) -> Module:
     """Compile Keleusma source text into a module.
 
     Raises `keleusma.LexError`, `keleusma.ParseError` or `keleusma.CompileError`.
     """
+
+def load_module(
+    data: bytes,
+    *,
+    verifying_keys: Sequence[bytes] | None = None,
+    decryption_key: bytes | None = None,
+) -> Module:
+    """Load a module from wire-format bytes, verifying or decrypting it as needed."""
+
+def library_signatures(name: str) -> str: ...
+def signing_public_key(seed: bytes) -> bytes: ...
+def encryption_public_key(private_key: bytes) -> bytes: ...
 
 @final
 class VM:
@@ -31,6 +52,7 @@ class VM:
         *,
         argument_bytes: int = ...,
         natives: Mapping[str, Callable[..., object] | Native] | None = None,
+        libraries: Sequence[str] | None = None,
     ) -> VM: ...
     @property
     def arena_capacity(self) -> int: ...
@@ -50,6 +72,9 @@ class VM:
     ) -> None: ...
     def set_native_bounds(self, name: str, wcet: int, wcmu_bytes: int) -> None: ...
     def native_bounds(self, name: str) -> tuple[int, int]: ...
+    def replace_module(self, module: Module) -> None: ...
+    def register_verifying_key(self, key: bytes) -> None: ...
+    def reset(self) -> None: ...
     @property
     def shared_data_bytes(self) -> int: ...
     @property

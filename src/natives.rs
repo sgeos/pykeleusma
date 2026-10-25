@@ -20,10 +20,13 @@
 //!
 //! A Keleusma native returns `Result<Value, VmError>`, which cannot carry a Python
 //! exception. When the callable raises, the closure stores the exception in an
-//! [`ErrorSlot`] and returns `VmError::NativeError`. The VM then raises the stored
-//! exception itself, so the caller of `call` or `resume` sees exactly what the native
-//! raised, including `KeyboardInterrupt`. The VM is marked failed, because Keleusma
-//! leaves its state undefined after a runtime error.
+//! [`ErrorSlot`] and returns an error. For a `keleusma.NativeError` that error is
+//! `VmError::NativeErrorCode`, which the script may handle with its native-error
+//! construct, the book's chapter 34. For any other exception it is a halting error,
+//! which no script construct catches. If the error ends the run, the VM raises the
+//! stored exception itself, so the caller of `call` or `resume` sees exactly what the
+//! native raised, including `KeyboardInterrupt`. The VM is marked failed, because
+//! Keleusma leaves its state undefined after a runtime error.
 //!
 //! # Re-entry
 //!
@@ -50,6 +53,9 @@ pub struct Slot {
     pub callable: Option<Py<PyAny>>,
     pub wcet: u32,
     pub wcmu_bytes: u32,
+    /// Whether one of Keleusma's bundled libraries provides this native, in which
+    /// case Keleusma calls its own implementation and `callable` is unused.
+    pub library: bool,
 }
 
 /// The natives of one VM by full name, shared with the closures Keleusma holds.
@@ -76,19 +82,65 @@ pub fn closure(
             |py| match invoke(py, &name, decl.as_ref(), &registry, ctx, args) {
                 Ok(value) => Ok(value),
                 Err(error) => {
+                    // A `keleusma.NativeError` reports a code the script may handle with
+                    // its native-error construct. Anything else fails the call, so it is
+                    // reported as a halting error, which that construct does not catch.
+                    // Keleusma's own `NativeError` would be caught, with the code -1, and
+                    // would swallow even `KeyboardInterrupt`.
+                    let code = native_error_code(py, &error);
                     let kind = error
                         .get_type(py)
                         .name()
                         .map(|n| n.to_string())
                         .unwrap_or_else(|_| "an exception".to_string());
                     *errors.borrow_mut() = Some(error);
-                    Err(VmError::NativeError(format!(
-                        "native `{name}` raised {kind}"
-                    )))
+                    Err(match code {
+                        Some((code, message)) => VmError::NativeErrorCode { code, message },
+                        None => VmError::InvalidBytecode(format!(
+                            "{NATIVE_RAISED} `{name}` raised {kind}"
+                        )),
+                    })
                 }
             },
         )
     }
+}
+
+/// The start of the message of the halting error a native returns when its callable
+/// raised an exception other than `keleusma.NativeError`. Keleusma has no halting
+/// error for a host failure, so `InvalidBytecode` carries it. The VM never shows the
+/// message, because it raises the stored exception instead.
+pub const NATIVE_RAISED: &str = "pykeleusma: the native";
+
+/// Whether `error` is one a native closure returned after storing an exception, so
+/// the stored exception, not `error`, is what the caller sees. Any other error means a
+/// stored exception, if any, was handled by the script and is stale.
+pub fn carries_stored_exception(error: &VmError) -> bool {
+    match error {
+        VmError::NativeErrorCode { .. } => true,
+        VmError::InvalidBytecode(message) => message.starts_with(NATIVE_RAISED),
+        _ => false,
+    }
+}
+
+/// The code and message of a `keleusma.NativeError`, or `None` for any other
+/// exception, including a `NativeError` whose code does not fit a `Word`.
+fn native_error_code(py: Python<'_>, error: &PyErr) -> Option<(i64, String)> {
+    let class = py
+        .import("keleusma._errors")
+        .and_then(|m| m.getattr("NativeError"))
+        .ok()?;
+    let value = error.value(py);
+    if !value.is_instance(&class).ok()? {
+        return None;
+    }
+    let code = value.getattr("code").ok()?.extract::<i64>().ok()?;
+    let message = value
+        .getattr("message")
+        .ok()
+        .and_then(|m| m.extract::<String>().ok())
+        .unwrap_or_default();
+    Some((code, message))
 }
 
 fn invoke(

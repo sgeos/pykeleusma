@@ -1,7 +1,7 @@
 """Roadmap task 5b. The worst-case figures a scheduler reads from Python.
 
-`vm.wcet_per_iteration` is Keleusma's worst-case time for one stream iteration, in its
-nominal cost units, and `vm.arena_capacity` is the arena's size in bytes. The tests
+`vm.wcet_per_iteration` is Keleusma's worst-case time for one stream iteration, in
+nominal cycles, and `vm.arena_capacity` is the arena's size in bytes. The tests
 compare figures between scripts rather than pinning constants, because the absolute
 numbers belong to Keleusma's cost model and layout, which may change between releases.
 """

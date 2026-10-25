@@ -13,8 +13,12 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 **Early development.** The repository was cut on 2026-10-24 and builds against the
 published Keleusma 0.2.2 from crates.io. Compiling, verified construction, calling,
-resuming, streaming, value conversion, Python natives and shared data work, and three
-examples run in tests. The first milestone is in
+resuming, streaming, value conversion, Python natives and shared data work, as do the
+book's structs, enums and options, recoverable native errors, bundled libraries,
+precompiled, signed and encrypted bytecode, and hot swap. The ten example scripts that
+ship with Keleusma run in tests with their stated results, and so do three examples of
+this repository's own. Keleusma 0.2.2 defects that the binding works around, and what
+it does not support, are in the design under Book coverage. The first milestone is in
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design in
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md). Nothing is
 published to PyPI yet.
@@ -33,8 +37,9 @@ Python.
   them to size the arena and to compute `vm.wcet_per_iteration`, but Python does not
   obey them. A script that calls a Python native has a worst case only for its own part.
 - **The figures are in Keleusma's units.** `vm.wcet_per_iteration` is the worst case of
-  one iteration of a `loop main` in Keleusma's nominal cost units, which are not cycles
-  or seconds. `vm.arena_capacity` is the arena's size in bytes.
+  one iteration of a `loop main` in nominal cycles, the cycle costs of Keleusma's
+  nominal cost model, which are not the cycles of any particular processor and not
+  seconds. `vm.arena_capacity` is the arena's size in bytes.
 - **Two limits are empirical in this release.** The arena includes a margin for a
   shortfall in Keleusma 0.2.2's own sizing, measured rather than proven, and composite
   arguments and native results draw on a budget the host chooses, `argument_bytes`.
@@ -73,8 +78,9 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
 - **Values** convert by the types `main` declares. `Word` and `Byte` become `int`,
   `bool` stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become
   `tuple`, arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact
-  `Fraction` that remembers its width. Out-of-range integers raise `OverflowError`
-  instead of wrapping.
+  `Fraction` that remembers its width. A struct becomes a `dict` of its fields, an enum
+  value a `keleusma.Variant`, and an `Option` either `None` or the value. Out-of-range
+  integers raise `OverflowError` instead of wrapping.
 - **Streams.** `vm.stream(*args, inputs=...)` drives a VM as a generator. A `loop main`
   reports `Reset` after each iteration, and the next input starts the next one.
 - **Natives** are passed as `keleusma.VM(module, natives={"host::f": f})`, or as
@@ -88,8 +94,42 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
 - **Arena budget.** A VM reserves `argument_bytes`, 4096 by default, of its arena for
   composite arguments such as tuples carrying text. A host that passes larger values
   gives a larger figure.
+- **Native errors.** A native that raises `keleusma.NativeError(code)` hands `code` to
+  a script that handles it with `host::f(x) { ok(v) => v, error(code) => ... }`. Any
+  other exception fails the call and reaches the caller unchanged.
 - **After a runtime error** a VM reports `failed` and refuses further use, because
-  Keleusma leaves its state undefined. Build a new one.
+  Keleusma leaves its state undefined, until `vm.reset()` clears the error and keeps
+  the data segment.
+- **Libraries.** `VM(module, libraries=["math"])` offers Keleusma's bundled `math`,
+  `audio` or `shell` natives, and `keleusma.library_signatures("math")` gives the
+  declarations a script includes.
+
+### Bytecode, signing and hot swap
+
+```python
+import keleusma
+
+seed = bytes(range(32))  # an Ed25519 signing seed, kept secret by whoever signs
+trusted = keleusma.signing_public_key(seed)
+
+source = "signed loop main(t: Word) -> Word { let n = yield t + 1; n }"
+data = keleusma.compile(source).to_signed_bytes(seed)  # bytes for a .kel.bin file
+update = keleusma.load_module(data, verifying_keys=[trusted])
+
+baseline = keleusma.compile("loop main(t: Word) -> Word { let n = yield t * 10; n }")
+vm = keleusma.VM(baseline)
+vm.register_verifying_key(trusted)  # from now on, only signed code may be swapped in
+vm.call(1)
+vm.resume(0)  # keleusma.Reset(), an iteration boundary
+vm.replace_module(update)
+assert vm.call(1) == keleusma.Yielded(2)
+```
+
+A module loaded from bytes has no declared types, so only scalars and text cross the
+boundary. `to_signed_bytes(seed, recipient_key=...)` also encrypts the module, and
+`load_module` then needs the matching `decryption_key`. A swap happens only at an
+iteration boundary, keeps shared data and starts private data afresh, and the VM is
+built from the module with the larger footprint, because its arena does not grow.
 
 ```python
 import keleusma

@@ -29,6 +29,11 @@ serves every later Python. maturin builds it.
 | `vm.resume(value)` | `Vm::resume(Value)`, implemented likewise |
 | `vm.stream(*args, inputs=None)` | A Python generator over `call` and `resume`, as described under Streaming |
 | Result kinds | `keleusma.Yielded`, `Finished` and `Reset` for `VmState::Yielded`, `Finished` and `Reset`. The breakpoint state is not exposed, because the binding arms no breakpoints |
+| `vm.reset()` | `Vm::reset_after_error`, as described under Book coverage |
+| `VM(module, libraries=[...])` | `Vm::register_library` with `stddsl::Math`, `Audio` or `Shell` |
+| `module.to_bytes()`, `keleusma.load_module(data)` | `Module::to_bytes`, `Module::from_bytes` and the `wire_format` signing and encryption functions |
+| `vm.replace_module(module)` | `Vm::replace_module`, with the trust matrix enforced by the binding, as described under Book coverage |
+| `vm.register_verifying_key(key)` | `Vm::register_verifying_key`, mirrored by the binding |
 | Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, raised as `VerifyError` or `VMError` as described under Arena sizing |
 
 `Vm` is `GenericVm<'a, 'arena, i64, u64, f64>` and `Value` is `GenericValue<i64, f64>`.
@@ -145,7 +150,7 @@ in `keleusma._native`, the README and this document, and implies nothing stronge
 
 | Python | Effect |
 |---|---|
-| `VM(module, natives={"host::f": f})` | Registers `f` with Keleusma's default bounds, 10 cost units and 0 bytes |
+| `VM(module, natives={"host::f": f})` | Registers `f` with Keleusma's default bounds, 10 nominal cycles and 0 bytes |
 | `VM(module, natives={"host::f": Native(f, wcet=50, wcmu_bytes=256)})` | Registers with declared bounds, and sizes the arena with the memory bound |
 | `vm.register(name, f, *, wcet=None, wcmu_bytes=None)` | Replaces the callable, keeping the declared bounds unless new ones are given |
 | `vm.set_native_bounds(name, wcet, wcmu_bytes)` | Declares new bounds, or refuses them with `VerifyError` if the arena cannot hold them |
@@ -323,14 +328,16 @@ update loop, the figures it budgets with.
 
 | Property | Unit | Source | Covers |
 |---|---|---|---|
-| `vm.wcet_per_iteration` | Keleusma's nominal cost units, an `int` | `Vm::wcet_per_iteration` | One iteration of a `loop main`, the script and the declared bounds of any natives |
+| `vm.wcet_per_iteration` | Nominal cycles, an `int` | `Vm::wcet_per_iteration` | One iteration of a `loop main`, the script and the declared bounds of any natives |
 | `vm.arena_capacity` | Bytes, an `int` | The arena plan described under Arena sizing | The memory the script itself can use |
 
-- **Time units.** Keleusma's own documentation calls them "the nominal cost model's
-  unitless cycle space", on the scale of its per-instruction costs. They are not
-  processor cycles or seconds. Converting them needs a calibrated cost model, which
-  Keleusma's cookbook describes and 0.1.0 does not include. Dromon's integration document
-  expected pipelined cycles, which this corrects.
+- **Time units.** Keleusma 0.2.2 counts time in nominal cycles, the pipelined-cycle
+  costs its nominal cost model assigns to each instruction, as the book's chapter 38
+  describes. They are not the cycles of any particular processor, and not seconds.
+  Converting them needs a calibrated or measured cost model, which Keleusma 0.2.2 does
+  not ship and the binding therefore does not expose. An earlier revision of this
+  document called the units unitless and not cycles, which the operator corrected on
+  2026-10-25.
 - **No stream, no figure.** Keleusma returns zero for a module without a stream chunk, so
   a `fn main` or a `yield main` would read as free. The binding returns `None` for
   those instead.
@@ -365,7 +372,11 @@ is valid only until the next call or resume.
 | `Text` | `str` | `str` only |
 | Tuple | `tuple` | A `tuple` of the declared length |
 | Array | `list` | A `list` or `tuple` of the declared length |
-| Named types, options | Not converted, `TypeError` naming the type | After 0.1.0 |
+| Struct | `dict` of its fields | Any mapping with exactly the declared fields |
+| Enum | `keleusma.Variant(name, values)` | A `Variant`, or the name of a variant without fields |
+| `Option<T>` | `None` or the value | `None` or a value of `T` |
+| Newtype | Its underlying type | Its underlying type, except a refined newtype, which raises `TypeError` |
+| Generic struct or enum, nested option | Not converted, `TypeError` naming the type | Not supported |
 
 A `bool` is never accepted where a number is declared, although Python treats it as an
 `int`, because passing `True` as a count is more often a mistake than an intent.
@@ -431,6 +442,88 @@ exact number and refuses rather than rounds, so a round trip is exact. Subclassi
 `Fraction` replaced the earlier plan to register with `numbers.Rational`, which would
 have required reimplementing the arithmetic.
 
+## Book coverage, roadmap task 12
+
+**Implemented on 2026-10-25,** at the operator's request that the binding cover the
+functionality the Keleusma book describes. The ten example scripts of the 0.2.2 crate
+run through the binding with their stated results, in `tests/test_book.py`. Of the 73
+programs in the book, a survey ran 41, while 12 needed arguments or natives the survey
+did not supply and 20 were fragments or were rejected by Keleusma's own compiler. None
+failed because of the binding. The survey is not exhaustive, because the 32 programs
+it did not run were not checked further.
+
+**Recoverable native errors.** A native raises `keleusma.NativeError(code, message)` to
+report an error the script may handle with `host::f(x) { ok(v) => ..., error(code) =>
+... }`, the construct of the book's chapters 33 and 34. The closure returns
+`VmError::NativeErrorCode`. Any other exception is returned as a halting error, so the
+construct never catches it. **Fact.** Keleusma's construct catches every error in its
+soft host category, including `VmError::NativeError`, and gives it the code -1, so
+returning that variant for every exception, as task 7 did, would have let a script
+swallow a `KeyError` or a `KeyboardInterrupt`. The halting error is carried by
+`InvalidBytecode`, because Keleusma has no halting variant for a host failure, and its
+message is never shown, because the VM raises the stored exception instead. A stored
+exception is raised only for an error the closure produced, so a native error that the
+script handled earlier in the same run cannot mask a later runtime error.
+
+**Recovery.** `vm.reset()` calls `Vm::reset_after_error`, which clears the operand
+stack, the frames and the arena and keeps the data segment. It also abandons a
+suspended stream.
+
+**Libraries.** `libraries=` registers Keleusma's bundled `math`, `audio` and `shell`
+natives, and `keleusma.library_signatures(name)` returns the declarations a script
+includes. A host callable given for the same name takes precedence. The shell library
+reaches the environment, processes and files, so a host offers it only by naming it.
+Library natives are Rust code with Keleusma's own bounds, unlike Python natives.
+
+**Precompiled bytecode.** `Module.to_bytes()` and `keleusma.load_module(data)`. The
+wire format carries no source, so a loaded module converts by each value's own tag,
+which admits scalars and text and refuses composites and `Fixed` with `TypeError`.
+Without declared types the binding cannot refuse a mistyped argument before running,
+so Keleusma's entry check refuses it as a runtime error and the VM fails until
+`vm.reset()`. Keleusma 0.2.3 rejects the version 1 bytecode that 0.2.2 writes.
+
+**Signed and encrypted modules.** `Module.to_signed_bytes(seed, recipient_key=None)`
+and `load_module(data, verifying_keys=..., decryption_key=...)`, the book's chapters 26
+and 36. Keys are 32-byte strings, checked for length and, for verifying keys, for being
+a valid curve point. The ephemeral key of an encryption comes from `os.urandom`. Giving
+verifying keys for an unsigned module, or a decryption key for a plaintext one, is
+refused, so a host that expects protected code cannot be handed unprotected code. A
+module compiled from source declared `signed` runs only from signed bytes. **Trust
+boundary.** The cryptography is Keleusma's, through `ed25519-dalek`, `x25519-dalek` and
+`aes-gcm`. The binding implements no primitive. A signing seed or decryption key passed
+from Python lives in a `bytes` object the binding cannot zero.
+
+**Hot swap.** `vm.replace_module(module)` at an iteration boundary, after `Reset` or
+`Finished`, the book's chapter 37. Shared data survives a swap with the same layout,
+and Keleusma refuses a swap that changes it. Private data starts as `()`, so state is
+not carried forward through private slots. A native the new module adds must be
+registered before the next call. A swap also recovers a failed VM. Three facts about
+Keleusma 0.2.2 shape the implementation, each verified with a pure Rust probe.
+
+- `Vm::replace_module` verifies the new module's resource bounds against the arena's
+  capacity, but without the registered natives' bounds and more loosely than `Vm::new`.
+  A probe built a VM in a 256-byte arena, swapped in a module that `Vm::new` refuses for
+  that arena, and the swap succeeded, after which the first call failed with
+  `OutOfArena`. The binding applies its construction-time sizing rule, margin and native
+  bounds included, to the new module first and refuses a module the arena is too small
+  for, so a host builds the VM from the larger module.
+- `Vm::replace_module_from_bytes` verifies the signature, then fails on every signed
+  module with "FLAG_REQUIRES_SIGNATURE is set but the header carries no signature
+  extension", because it keeps the signature flag on the decoded module and the swap
+  re-encodes it without the signature. The binding verifies the bytes against the trust
+  matrix itself and installs the decoded module with the flag cleared, the steps of
+  Keleusma's own signed loader.
+- `Vm::replace_module` ignores the trust matrix, so an unsigned module would replace
+  signed code on a VM that trusts keys. The binding keeps its own copy of the matrix and
+  refuses an unsigned swap once any key is trusted, the policy Keleusma's signed loader
+  states. An encrypted module cannot be swapped in, because its signature covers the
+  encrypted form, which is gone after decryption.
+
+**Not supported.** `use external` natives, generic structs and enums, nested options,
+refined newtypes as inputs, the multiword big-number types, typed access to shared data
+other than bytes, and calibrated or measured cost models, which Keleusma 0.2.2 does not
+ship.
+
 ## Threading
 
 **Fact.** `Arena` holds `Cell` fields and a raw pointer, so neither it nor the `Vm` that
@@ -458,6 +551,14 @@ of scope for 0.1.0.
 **Mistyped yields.** Described under Values. Keleusma 0.2.2's safe decode can segfault
 on a program its compiler accepts, and the binding guards against the known form.
 
+**Text concatenation.** Keleusma's FAQ states that a `fn main` doubling a text value
+with `s + s` compiles and runs. In 0.2.2 it compiles, and the first `s + s` fails at run
+time with `TypeError("cannot add KStr and KStr")`, verified with a pure Rust probe. This
+is a discrepancy between Keleusma and its book, not a binding defect.
+
+**Hot swap.** Three defects in `Vm::replace_module` and `Vm::replace_module_from_bytes`,
+described under Book coverage, which the binding works around.
+
 **Miri with Stacked Borrows.** On 2026-10-24, running the Rust tests under Miri's
 default Stacked Borrows model reported undefined behaviour inside rkyv 0.8.18,
 `ArchivedStringRepr::check_bytes`, reached from `Vm::new` while validating the archived
@@ -474,9 +575,9 @@ depends on 0.2.2.
 - **NumPy without copying.** `Vm::call_with_shared(&mut [u8], ...)` lends the VM a shared
   data buffer for one call. A NumPy array exposed through the buffer protocol could be
   that buffer.
-- **Precompiled bytecode.** `Vm::load_bytes`. Keleusma 0.2.2 writes bytecode version 1,
-  and 0.2.3 rejects version 1, so bytecode is not portable across that upgrade.
-- **Hot swap.** `Vm::replace_module`, useful for live reloading in a game loop.
-- **Signed modules.** `Vm::load_signed_bytes` under the `signatures` feature.
+- **Typed shared data.** Reading and writing the shared block by its declared fields,
+  rather than as bytes.
+- **Carrying private data across a hot swap,** which needs Keleusma's private values
+  converted out and back in.
 - **Wheels for Linux, macOS and Windows,** built in continuous integration with
   maturin's GitHub Action.

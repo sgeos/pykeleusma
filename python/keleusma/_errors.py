@@ -70,3 +70,34 @@ class VMError(KeleusmaError, RuntimeError):
     The message is Keleusma's description of the fault, for example a division by zero
     or an arena too small for an argument.
     """
+
+
+class NativeError(KeleusmaError):
+    """Raised by a native to report an error code the script can handle.
+
+    A script handles it with the native-error construct of the Keleusma book, for
+    example `let row = host::lookup(id) { ok(v) => v, error(code) => 0 - code };`.
+    Keleusma receives `code` as a `Word`. If the script does not handle it, the call
+    or resume that ran the script raises this same exception and the VM fails, as
+    after any runtime error. Any other exception from a native always fails the VM.
+    """
+
+    code: int
+    message: str
+
+    def __init__(self, code: int, message: str = "") -> None:
+        if isinstance(code, bool) or not isinstance(code, int):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise TypeError("a native error code must be an int")
+        super().__init__(message or f"native error code {code}")
+        self.code = code
+        self.message = message
+
+    def __reduce__(self) -> tuple[type["NativeError"], tuple[int, str]]:
+        return (type(self), (self.code, self.message))
+
+
+class LoadError(KeleusmaError, ValueError):
+    """Bytes that are not a valid Keleusma module, rejected before verification.
+
+    Raised by `keleusma.load_module` for a truncated, corrupt or incompatible image.
+    """

@@ -12,16 +12,16 @@ completed, moved or abandoned.
 - **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
 - **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
   and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
-  local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
-- **Tasks 1 to 11 done.** Everything the 0.1.0 milestone lists is implemented and
-  merged: compilation with located errors, verified construction with a sized arena,
-  value conversion by declared type, `call`, `resume` and `stream`, Python natives with
-  declared bounds, the worst-case figures, three examples, the README's guarantee
-  boundary, continuous integration, and shared data blocks lent as host buffers, which
-  was added as task 11 at the operator's instruction.
+  local check, and the Rust tests under Miri with Tree Borrows.
+- **Tasks 1 to 12 done.** Task 12, added at the operator's request, covers what the
+  Keleusma book describes: structs, enums and options at the boundary, recoverable
+  native errors, `vm.reset()`, bundled libraries, precompiled, signed and encrypted
+  bytecode, and hot swap with a trust matrix. The crate's ten example scripts run in
+  `tests/test_book.py`. The design records it under Book coverage.
+- **Units.** `wcet_per_iteration` is documented in nominal cycles since the operator's
+  correction on 2026-10-25. `pydromon` was notified.
 - **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
-- **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Standing permission
 
@@ -33,25 +33,30 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 The 0.1.0 milestone's tasks are complete. A release to PyPI needs the operator's
 confirmation in session. Candidate follow-ups are a typed view of shared data blocks,
-recovery of a failed VM through `reset_after_error`, and the replies `v0.2.3` owes.
+carrying private data across a hot swap, and the replies `v0.2.3` owes.
 
 ## Open
 
+- **Keleusma workarounds.** The binding works around three hot swap behaviours of
+  Keleusma 0.2.2, described in the design under Book coverage. Each should be
+  revisited after an upgrade.
+- **Not supported.** `use external` natives, generic structs and enums, nested options,
+  refined newtypes as inputs, multiword big numbers, typed shared data, private data
+  carried across a swap, swapping in an encrypted module, and calibrated cost models.
 - **Yield guard is partial.** A yielded expression with no recorded type is not
   compared. No crash was found past the guard, but only a Keleusma fix closes it.
 - **One iteration per frame, not one resume.** A Keleusma 0.2.2 stream iteration is
-  always one yield and one `Reset`, so task 8's frame loop resumes twice per frame. The
-  roadmap records the deviation.
+  always one yield and one `Reset`, so task 8's frame loop resumes twice per frame.
 - **Arena margin is empirical.** Task 3 covers the observed shortfall of one operand
-  stack doubling, with at least 48 bytes to spare in every script measured. It is not
-  a proven bound. A Rust test fails if Keleusma fixes its footprint, prompting a review.
-- **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, covering arena
-  margins, a yield type-check gap and how a dynamic host decodes flat composites.
-  High-priority request `pykeleusma-20261025-yield-soundness`, reporting that the type
-  gap reaches undefined behaviour through Keleusma's safe decode. The
-  interim reply `v023-20261025-dynamic-host-interim` says nothing is checked against
-  0.2.3 yet, that the arena and type findings would be defects if they reproduce, and
-  that a host margin is a workaround, not a supported bound.
+  stack doubling. It is not a proven bound. A Rust test fails if Keleusma fixes its
+  footprint, prompting a review.
+- **With `v0.2.3`.** Requests `pykeleusma-20261025-dynamic-host-findings` and
+  `pykeleusma-20261025-yield-soundness`, with only the interim reply
+  `v023-20261025-dynamic-host-interim`. Request
+  `pykeleusma-20261025-book-coverage-findings`, reporting the signed hot swap failure,
+  the plain swap ignoring the trust matrix, a loose swap resource check and the text
+  concatenation discrepancy with the FAQ, with its correction
+  `pykeleusma-20261025-book-coverage-correction` to the resource check item.
 
 ## Environment
 
@@ -80,8 +85,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 212 tests pass
-cargo test                  # 27 Rust tests pass
+uv sync && uv run pytest    # 325 tests pass
+cargo test                  # 29 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

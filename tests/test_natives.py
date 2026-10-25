@@ -78,7 +78,7 @@ def test_an_undeclared_native_refuses_a_composite_argument() -> None:
         "use host::look\nfn main(e: (Text, Word)) -> Word { host::look(e) }"
     )
     vm = keleusma.VM(module, natives={"host::look": _zero})
-    with pytest.raises(TypeError, match="needs one"):
+    with pytest.raises(TypeError, match="needs a declared type"):
         vm.call(("a", 1))
 
 

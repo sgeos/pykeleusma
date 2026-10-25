@@ -1,14 +1,14 @@
 //! The declared types of a script's entry point, read from the parsed program.
 //!
-//! Roadmap task 4 converts values by type. A flat Keleusma composite carries no
-//! per-field types, so the binding reads them from the entry point's declaration,
-//! which `keleusma.compile` has in hand as the parsed program.
+//! A flat Keleusma composite carries no per-field types, so the binding reads them from
+//! the declarations, which `keleusma.compile` has in hand as the parsed program.
 //!
-//! Only the types 0.1.0 converts are modelled, which are the primitives, unit,
-//! tuples and arrays. A named type, an option, an untyped parameter or any other
-//! form is recorded as [`Unsupported`] with a description, so a module that uses one
-//! still compiles and builds a VM, and the error appears only when a value of that
-//! type is converted.
+//! The modelled types are the primitives, unit, tuples, arrays, structs, enums,
+//! options and newtypes, which resolve to their underlying type. A generic struct or
+//! enum, a nested option, a multiword integer, an untyped parameter or any other form
+//! is recorded as [`Unsupported`] with a description, so a module that uses one still
+//! compiles and builds a VM, and the error appears only when a value of that type is
+//! converted.
 //!
 //! Layouts come from Keleusma's own [`LayoutDescriptor`], which is also what the
 //! compiler uses through its type checker, so field offsets match the compiled code
@@ -16,8 +16,19 @@
 
 use std::collections::BTreeMap;
 
-use keleusma::ast::{ConstExpr, FunctionCategory, ImportItem, PrimType, Program, TypeExpr};
+use keleusma::ast::{
+    ConstExpr, FunctionCategory, ImportItem, PrimType, Program, TypeDef, TypeExpr,
+};
 use keleusma::value_layout::{LayoutDescriptor, ScalarKind};
+
+/// One variant of an enum type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Variant {
+    pub name: String,
+    /// The discriminant Keleusma stores in the flat body's leading word.
+    pub disc: i64,
+    pub fields: Vec<Ty>,
+}
 
 /// A type the binding converts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +43,28 @@ pub enum Ty {
     Text,
     Tuple(Vec<Ty>),
     Array(Box<Ty>, usize),
+    Struct {
+        name: String,
+        fields: Vec<(String, Ty)>,
+    },
+    Enum {
+        name: String,
+        variants: Vec<Variant>,
+    },
+    /// `Option<T>`, which Keleusma lays out as an enum of `None` and `Some(T)`.
+    Option(Box<Ty>),
+    /// A newtype with a refinement rule, laid out as its underlying type. The script
+    /// checks the rule whenever it builds one, so a value may leave the script, but the
+    /// host cannot build one, because the rule is script code the binding cannot run.
+    Refined {
+        name: String,
+        inner: Box<Ty>,
+    },
 }
+
+/// The discriminants Keleusma uses for `Option`, as in its own marshalling.
+pub const OPTION_NONE: i64 = 0;
+pub const OPTION_SOME: i64 = 1;
 
 /// Why a declared type cannot be converted, for the error message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +91,28 @@ impl Ty {
                 element: Box::new(element.layout()),
                 count: *count,
             },
+            Ty::Struct { name, fields } => LayoutDescriptor::Struct {
+                type_name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|(n, t)| (n.clone(), t.layout()))
+                    .collect(),
+            },
+            Ty::Enum { name, variants } => LayoutDescriptor::Enum {
+                type_name: name.clone(),
+                variants: variants
+                    .iter()
+                    .map(|v| (v.name.clone(), v.fields.iter().map(Ty::layout).collect()))
+                    .collect(),
+            },
+            Ty::Refined { inner, .. } => inner.layout(),
+            Ty::Option(inner) => LayoutDescriptor::Enum {
+                type_name: "Option".to_string(),
+                variants: vec![
+                    ("None".to_string(), vec![]),
+                    ("Some".to_string(), vec![inner.layout()]),
+                ],
+            },
         }
     }
 
@@ -77,52 +131,162 @@ impl Ty {
                 format!("({})", names.join(", "))
             }
             Ty::Array(element, count) => format!("[{}; {count}]", element.name()),
+            Ty::Struct { name, .. } | Ty::Enum { name, .. } | Ty::Refined { name, .. } => {
+                name.clone()
+            }
+            Ty::Option(inner) => format!("Option<{}>", inner.name()),
         }
     }
 }
 
-/// Resolve a declared type expression.
-///
-/// `default_frac_bits` is the target's default for a bare `Fixed`, which the type
-/// checker substitutes the same way.
-pub fn resolve(expr: &TypeExpr, default_frac_bits: u8) -> Declared {
-    match expr {
-        TypeExpr::Unit(_) => Ok(Ty::Unit),
-        TypeExpr::Prim(prim, _) => Ok(match prim {
-            PrimType::Bool => Ty::Bool,
-            PrimType::Byte => Ty::Byte,
-            PrimType::Word => Ty::Word,
-            PrimType::Fixed(bits) => Ty::Fixed(bits.unwrap_or(default_frac_bits)),
-            PrimType::Float => Ty::Float,
-            PrimType::Text => Ty::Text,
-        }),
-        TypeExpr::Tuple(elements, _) => elements
+/// The deepest chain of named types the resolver follows. Keleusma rejects a type that
+/// contains itself, so this bound only stops a malformed program from looping.
+const MAX_DEPTH: usize = 32;
+
+/// Resolves type expressions against one program's struct, enum and newtype
+/// definitions.
+#[derive(Debug, Clone)]
+pub struct Resolver {
+    default_frac_bits: u8,
+    defs: BTreeMap<String, TypeDef>,
+}
+
+impl Resolver {
+    /// `default_frac_bits` is the target's default for a bare `Fixed`, which the type
+    /// checker substitutes the same way.
+    pub fn new(program: &Program, default_frac_bits: u8) -> Self {
+        let defs = program
+            .types
             .iter()
-            .map(|e| resolve(e, default_frac_bits))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Ty::Tuple),
-        TypeExpr::Array(element, length, _) => {
-            let element = resolve(element, default_frac_bits)?;
-            match length {
-                ConstExpr::Lit(n, _) => usize::try_from(*n)
-                    .map(|count| Ty::Array(Box::new(element), count))
-                    .map_err(|_| Unsupported(format!("an array length of {n}"))),
-                _ => Err(Unsupported(
-                    "an array whose length is not a literal".to_string(),
+            .map(|def| {
+                let name = match def {
+                    TypeDef::Struct(s) => s.name.clone(),
+                    TypeDef::Enum(e) => e.name.clone(),
+                    TypeDef::Newtype(n) => n.name.clone(),
+                };
+                (name, def.clone())
+            })
+            .collect();
+        Self {
+            default_frac_bits,
+            defs,
+        }
+    }
+
+    /// Resolve a declared type expression.
+    pub fn resolve(&self, expr: &TypeExpr) -> Declared {
+        self.resolve_at(expr, 0)
+    }
+
+    fn resolve_at(&self, expr: &TypeExpr, depth: usize) -> Declared {
+        if depth > MAX_DEPTH {
+            return Err(Unsupported("a type nested too deeply".to_string()));
+        }
+        let next = depth + 1;
+        match expr {
+            TypeExpr::Unit(_) => Ok(Ty::Unit),
+            TypeExpr::Prim(prim, _) => Ok(match prim {
+                PrimType::Bool => Ty::Bool,
+                PrimType::Byte => Ty::Byte,
+                PrimType::Word => Ty::Word,
+                PrimType::Fixed(bits) => Ty::Fixed(bits.unwrap_or(self.default_frac_bits)),
+                PrimType::Float => Ty::Float,
+                PrimType::Text => Ty::Text,
+            }),
+            TypeExpr::Tuple(elements, _) => elements
+                .iter()
+                .map(|e| self.resolve_at(e, next))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Ty::Tuple),
+            TypeExpr::Array(element, length, _) => {
+                let element = self.resolve_at(element, next)?;
+                match length {
+                    ConstExpr::Lit(n, _) => usize::try_from(*n)
+                        .map(|count| Ty::Array(Box::new(element), count))
+                        .map_err(|_| Unsupported(format!("an array length of {n}"))),
+                    _ => Err(Unsupported(
+                        "an array whose length is not a literal".to_string(),
+                    )),
+                }
+            }
+            // A label narrows a type without changing its representation.
+            TypeExpr::Labelled(inner, _, _) => self.resolve_at(inner, next),
+            TypeExpr::Option(inner, _) => match self.resolve_at(inner, next)? {
+                // `None` could not tell an outer `None` from an inner one in Python.
+                Ty::Option(_) => Err(Unsupported(
+                    "a nested option, whose `None` would be ambiguous in Python".to_string(),
                 )),
+                inner => Ok(Ty::Option(Box::new(inner))),
+            },
+            TypeExpr::Named(name, args, consts, _) => {
+                if !args.is_empty() || !consts.is_empty() {
+                    return Err(Unsupported(format!("the generic type `{name}`")));
+                }
+                self.named(name, next)
+            }
+            TypeExpr::Multiword(_, _, _) => Err(Unsupported("a multiword integer".to_string())),
+            #[allow(unreachable_patterns)]
+            _ => Err(Unsupported("this type form".to_string())),
+        }
+    }
+
+    fn named(&self, name: &str, depth: usize) -> Declared {
+        let def = self
+            .defs
+            .get(name)
+            .ok_or_else(|| Unsupported(format!("the unknown type `{name}`")))?;
+        match def {
+            TypeDef::Struct(s) => {
+                if !s.type_params.is_empty() || !s.const_params.is_empty() {
+                    return Err(Unsupported(format!("the generic struct `{name}`")));
+                }
+                let fields = s
+                    .fields
+                    .iter()
+                    .map(|f| Ok((f.name.clone(), self.resolve_at(&f.type_expr, depth)?)))
+                    .collect::<Result<Vec<_>, Unsupported>>()?;
+                Ok(Ty::Struct {
+                    name: name.to_string(),
+                    fields,
+                })
+            }
+            TypeDef::Enum(e) => {
+                if !e.type_params.is_empty() || !e.const_params.is_empty() {
+                    return Err(Unsupported(format!("the generic enum `{name}`")));
+                }
+                let variants = e
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        let fields = v
+                            .fields
+                            .iter()
+                            .map(|t| self.resolve_at(t, depth))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(Variant {
+                            name: v.name.clone(),
+                            disc: v.discriminant_value,
+                            fields,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Unsupported>>()?;
+                Ok(Ty::Enum {
+                    name: name.to_string(),
+                    variants,
+                })
+            }
+            // A newtype has its underlying type's representation.
+            TypeDef::Newtype(n) => {
+                let inner = self.resolve_at(&n.underlying, depth)?;
+                Ok(match n.refinement {
+                    Some(_) => Ty::Refined {
+                        name: name.to_string(),
+                        inner: Box::new(inner),
+                    },
+                    None => inner,
+                })
             }
         }
-        // A label narrows a type without changing its representation.
-        TypeExpr::Labelled(inner, _, _) => resolve(inner, default_frac_bits),
-        TypeExpr::Named(name, _, _, _) => Err(Unsupported(format!(
-            "the named type `{name}`, since structs and enums arrive after 0.1.0"
-        ))),
-        TypeExpr::Option(_, _) => Err(Unsupported(
-            "an option type, which arrives after 0.1.0".to_string(),
-        )),
-        TypeExpr::Multiword(_, _, _) => Err(Unsupported("a multiword integer".to_string())),
-        #[allow(unreachable_patterns)]
-        _ => Err(Unsupported("this type form".to_string())),
     }
 }
 
@@ -159,6 +323,7 @@ impl EntrySignature {
     /// the same types, or the boundary has no single type and is recorded as
     /// unsupported.
     pub fn from_program(program: &Program, default_frac_bits: u8) -> Option<Self> {
+        let resolver = Resolver::new(program, default_frac_bits);
         let mut heads = program.functions.iter().filter(|f| f.name == "main");
         let first = heads.next()?;
         let signature_of = |f: &keleusma::ast::FunctionDef| {
@@ -171,7 +336,7 @@ impl EntrySignature {
                 .params
                 .iter()
                 .map(|p| match &p.type_expr {
-                    Some(expr) => resolve(expr, default_frac_bits),
+                    Some(expr) => resolver.resolve(expr),
                     None => Err(Unsupported(
                         "a parameter without a declared type".to_string(),
                     )),
@@ -190,7 +355,7 @@ impl EntrySignature {
             EntrySignature {
                 category,
                 params,
-                ret: resolve(&f.return_type, default_frac_bits),
+                ret: resolver.resolve(&f.return_type),
                 resume,
             }
         };
@@ -226,6 +391,7 @@ pub struct NativeDecl {
 /// such as `host::double`. A wildcard import names no native, so its natives are
 /// absent here and convert as untyped.
 pub fn native_decls(program: &Program, default_frac_bits: u8) -> BTreeMap<String, NativeDecl> {
+    let resolver = Resolver::new(program, default_frac_bits);
     program
         .uses
         .iter()
@@ -239,12 +405,8 @@ pub fn native_decls(program: &Program, default_frac_bits: u8) -> BTreeMap<String
             }
             full.push_str(name);
             let signature = decl.signature.as_ref().map(|sig| {
-                let params = sig
-                    .params
-                    .iter()
-                    .map(|p| resolve(p, default_frac_bits))
-                    .collect();
-                (params, resolve(&sig.return_type, default_frac_bits))
+                let params = sig.params.iter().map(|p| resolver.resolve(p)).collect();
+                (params, resolver.resolve(&sig.return_type))
             });
             Some((
                 full,
@@ -309,7 +471,7 @@ mod tests {
 
     #[test]
     fn a_named_type_is_unsupported_but_does_not_fail_the_signature() {
-        let s = signature("struct P { x: Word }\nfn main(p: P, n: Word) -> Word { n }");
+        let s = signature("struct P<T> { x: T }\nfn main(p: P<Word>, n: Word) -> Word { n }");
         assert!(matches!(&s.params[0], Err(Unsupported(m)) if m.contains("`P`")));
         assert_eq!(s.params[1], Ok(Ty::Word));
         assert_eq!(s.ret, Ok(Ty::Word));
