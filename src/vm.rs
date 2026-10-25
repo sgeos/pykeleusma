@@ -179,7 +179,7 @@ fn shared_type(module: &Module) -> Result<Ty, String> {
             .strip_prefix(block.as_str())
             .and_then(|rest| rest.strip_prefix('.'))
             .and_then(|rest| shared_slot_offset(rest, fields, &layout, widths));
-        if expected != Some(usize::from(recorded.offset)) {
+        if expected != crate::compat::shared_slot_offset(recorded) {
             return Err(format!(
                 "the slot `{}` lies at offset {} in Keleusma's layout, not {expected:?}",
                 slot.name, recorded.offset

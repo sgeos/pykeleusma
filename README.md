@@ -14,11 +14,14 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 **Early development.** The repository was cut on 2026-10-24 and builds against the
 published Keleusma 0.2.2 from crates.io. Compiling, verified construction, calling,
 resuming, streaming, value conversion, Python natives and shared data work, as do the
-book's structs, enums and options, recoverable native errors, bundled libraries,
-precompiled, signed and encrypted bytecode, and hot swap. The ten example scripts that
+book's structs, enums and options, big numbers, opaque host values, recoverable native
+errors, bundled libraries, precompiled, signed and encrypted bytecode, hot swap and
+custom cost models. The ten example scripts that
 ship with Keleusma run in tests with their stated results, and so do three examples of
 this repository's own. Keleusma 0.2.2 defects that the binding works around, and what
-it does not support, are in the design under Book coverage. The first milestone is in
+it does not support, are in the design under Book coverage, and the move to Keleusma
+0.2.3 is prepared in
+[`docs/architecture/MIGRATION_V0_2_3.md`](docs/architecture/MIGRATION_V0_2_3.md). The first milestone is in
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design in
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md). Nothing is
 published to PyPI yet.
@@ -30,8 +33,9 @@ bound covers **the script, and the bounds declared for each native**. It never c
 Python.
 
 - **Python code is outside every bound.** That includes a Python callable registered as
-  a native, the binding's conversion of values, and anything the host does between
-  calls. A native can run for any time and allocate any memory.
+  a native, the binding's conversion of values, Python objects carried as opaque values,
+  and anything the host does between calls. A native can run for any time and allocate
+  any memory.
 - **A native's declared bounds are promises, not limits.** The `wcet` and `wcmu_bytes`
   given for a native are attestations the host makes and Keleusma trusts. Keleusma uses
   them to size the arena and to compute `vm.wcet_per_iteration`, but Python does not
@@ -79,8 +83,11 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
   `bool` stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become
   `tuple`, arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact
   `Fraction` that remembers its width. A struct becomes a `dict` of its fields, an enum
-  value a `keleusma.Variant`, and an `Option` either `None` or the value. Out-of-range
-  integers raise `OverflowError` instead of wrapping.
+  value a `keleusma.Variant`, and an `Option` either `None` or the value. A
+  `Multiword<N, F>` big number becomes an `int`, or an exact `Fraction` when `F` is not
+  zero. A type the script names but does not define is an opaque host type, and any
+  Python object passes through it unchanged. Out-of-range integers raise
+  `OverflowError` instead of wrapping.
 - **Streams.** `vm.stream(*args, inputs=...)` drives a VM as a generator. A `loop main`
   reports `Reset` after each iteration, and the next input starts the next one.
 - **Natives** are passed as `keleusma.VM(module, natives={"host::f": f})`, or as
@@ -90,7 +97,8 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
   it. A shared `data` block is owned by the VM, which keeps it across calls.
   `vm.call(x, shared=buffer)`, with a `bytearray` of `vm.shared_data_bytes` bytes, syncs
   the block from `buffer`, runs, and flushes the block back to it, and `vm.shared_data`
-  returns a copy of it.
+  returns a copy of it. `vm.read_shared()` and `vm.write_shared({"field": value})`
+  convert the block's fields by their declared types.
 - **Arena budget.** A VM reserves `argument_bytes`, 4096 by default, of its arena for
   composite arguments such as tuples carrying text. A host that passes larger values
   gives a larger figure.
@@ -102,7 +110,11 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
   the data segment.
 - **Libraries.** `VM(module, libraries=["math"])` offers Keleusma's bundled `math`,
   `audio` or `shell` natives, and `keleusma.library_signatures("math")` gives the
-  declarations a script includes.
+  declarations a script includes. A script's declaration of a library native must
+  match the library's.
+- **Other cost models.** `vm.wcet_per_iteration_with({"CheckedAdd": 3})` computes the
+  worst case under a cost table of the host's, keyed by the names in
+  `keleusma.OP_NAMES`, with every other opcode at its nominal cost.
 
 ### Bytecode, signing and hot swap
 
@@ -132,7 +144,8 @@ bytecode only from a source as trusted as the script's own source. A signature t
 the host who produced the bytes. It protects only as far as the holders of the trusted
 keys are trusted. `to_signed_bytes(seed, recipient_key=...)` also encrypts the module, and
 `load_module` then needs the matching `decryption_key`. A swap happens only at an
-iteration boundary, keeps shared data and starts private data afresh, and the VM is
+iteration boundary, keeps shared data and starts private data afresh, unless
+`private={"field": value}` seeds the new module's scalar private fields. The VM is
 built from the module with the larger footprint, because its arena does not grow.
 
 ```python

@@ -7,6 +7,19 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Known issues, technical debt and readiness for Keleusma 0.2.3, roadmap task 13.
+  Opaque host values, through which any Python object passes, and `Multiword<N, F>` big
+  numbers convert at the boundary. `vm.read_shared` and `vm.write_shared` convert the
+  shared block by its declared fields. `vm.replace_module(module, private=...)` seeds
+  scalar private fields, and an encrypted module may now be swapped in under the trust
+  matrix. Const-generic structs convert, and const-generic enums leave the script.
+  `vm.wcet_per_iteration_with` and `keleusma.OP_NAMES` apply a cost table of the
+  host's. `src/compat.rs` gathers the calls 0.2.3 changes, `src/canaries.rs` pins the
+  0.2.2 behaviours the binding depends on, `tools/fuzz_load_module.py` fuzzes loading,
+  and `docs/architecture/MIGRATION_V0_2_3.md` describes the migration. CI now tests
+  Windows, and `.github/workflows/wheels.yml` builds and smoke-tests wheels for Linux,
+  macOS and Windows without publishing. The version is now 0.1.0.
+
 - Coverage of the Keleusma book, roadmap task 12. Structs convert to and from `dict`,
   enums to and from `keleusma.Variant`, and options to `None` or the value, for
   arguments, results, yields and natives. `keleusma.NativeError(code, message)` reports
@@ -60,7 +73,7 @@ All notable changes are recorded here. The format follows
 - `keleusma.compile(source)`, returning an immutable `keleusma.Module`, and the
   exceptions `KeleusmaError`, `SourceError`, `LexError`, `ParseError` and
   `CompileError`. A source error carries `msg`, `lineno` and a character-based `colno`.
-- Continuous integration on GitHub Actions, testing Linux and macOS with Python 3.12
+- Continuous integration on GitHub Actions, testing Linux, macOS and Windows with Python 3.12
   and 3.15, plus the Rust tests under Miri.
 
 - `OwnedVm`, which owns a Keleusma arena and the VM that borrows it as one `self_cell`
@@ -71,6 +84,10 @@ All notable changes are recorded here. The format follows
   repository.
 
 ### Fixed
+
+- A malformed module from `load_module` could crash the process with a stack overflow,
+  because the binding sized the arena with Keleusma's footprint analysis before Keleusma
+  verified the module. The structural verifier now runs first. Found by fuzzing.
 
 - A native served by a host callable kept converting by the declaration of the module
   it was first built for after a hot swap. Each swap now rebuilds the closures.

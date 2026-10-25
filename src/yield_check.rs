@@ -15,6 +15,10 @@
 //! told apart from the bytes alone, and the VM exposes no address range for its
 //! read-only data against which a pointer could be checked.
 //!
+//! KELEUSMA-0.2.2: Keleusma's PR 517 to the 0.2.3 branch makes its type checker
+//! refuse a mistyped yield and checks a flat `Text` field's range before decoding.
+//! Once a release carries it, this guard is redundant and may be removed.
+//!
 //! # What it checks
 //!
 //! The guard repeats the compiler's own sequence, a type check, monomorphisation and

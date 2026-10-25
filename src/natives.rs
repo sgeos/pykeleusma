@@ -108,7 +108,8 @@ pub fn closure(
 
 /// The start of the message of the halting error a native returns when its callable
 /// raised an exception other than `keleusma.NativeError`. Keleusma has no halting
-/// error for a host failure, so `InvalidBytecode` carries it. The VM never shows the
+/// error for a host failure, so `InvalidBytecode` carries it. KELEUSMA-0.2.2: the
+/// 0.2.3 branch adds no such variant either. The VM never shows the
 /// message, because it raises the stored exception instead.
 pub const NATIVE_RAISED: &str = "pykeleusma: the native";
 

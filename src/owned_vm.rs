@@ -153,7 +153,9 @@ impl ArenaPlan {
         argument_bytes: usize,
         native_wcmu: &[u32],
     ) -> Result<Self, OwnedVmError> {
-        // Keleusma's structural verifier runs first, as it does first in `Vm::new`. The
+        // KELEUSMA-0.2.2: kept on any version, since sizing must never analyse an
+        // unverified module. Keleusma's structural verifier runs first, as it does
+        // first in `Vm::new`. The
         // footprint analyses below assume a well-formed control-flow graph, and a
         // crafted module, found by fuzzing `keleusma.load_module`, sent
         // `module_runtime_footprint` into unbounded recursion and overflowed the
@@ -360,6 +362,7 @@ impl OwnedVm {
     /// An unsigned module is refused once the VM trusts any key, the policy Keleusma's
     /// signed loader states, because a host that registered keys requires signed code.
     /// Keleusma 0.2.2's own `replace_module` does not apply that policy.
+    /// KELEUSMA-0.2.2: unchanged on the 0.2.3 branch, so this check stays.
     pub fn replace_module(
         &mut self,
         module: Module,
@@ -392,6 +395,9 @@ impl OwnedVm {
     /// the same steps as Keleusma's signed loader instead, which verifies the bytes and
     /// clears the flag on the decoded module. `module` must be decoded from `bytes`,
     /// which `keleusma.load_module` guarantees by keeping both from one input.
+    /// KELEUSMA-0.2.2: fixed on the 0.2.3 branch, after which this may delegate to
+    /// `replace_module_from_bytes`, keeping the binding's own trust matrix and arena
+    /// check.
     pub fn replace_module_signed(
         &mut self,
         module: &Module,
@@ -425,6 +431,7 @@ impl OwnedVm {
     }
 
     fn check_fits(&self, module: &Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+        // KELEUSMA-0.2.2: unchanged on the 0.2.3 branch, so this check stays.
         // Keleusma's own `replace_module` checks the new module's bounds against the
         // arena's capacity, but without the natives' bounds and more loosely than
         // `Vm::new`, so a module that construction would refuse can be admitted and

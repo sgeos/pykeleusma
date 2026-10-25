@@ -119,7 +119,7 @@ def driver(batches: int, batch: int) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Fuzz keleusma.load_module.")
     parser.add_argument("--batches", type=int, default=20)
     parser.add_argument("--batch", type=int, default=1000)
     parser.add_argument("--worker", nargs=2, type=int, metavar=("START", "COUNT"))

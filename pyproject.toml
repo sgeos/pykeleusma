@@ -16,7 +16,7 @@ authors = [{ name = "Brendan Sechter", email = "sgeos@hotmail.com" }]
 requires-python = ">=3.12"
 dependencies = []
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Interpreters",
@@ -69,6 +69,6 @@ select = ["E", "F", "B", "S", "ANN", "RET", "SIM"]
 "tests/*" = ["S101"]
 
 [tool.pyright]
-include = ["python", "tests", "examples"]
+include = ["python", "tests", "examples", "tools"]
 extraPaths = ["examples"]
 typeCheckingMode = "strict"

@@ -79,6 +79,7 @@ pub enum OutOnly {
     /// A newtype with a refinement rule. The script checks the rule whenever it builds
     /// one, but the rule is script code the binding cannot run.
     Refinement,
+    /// KELEUSMA-0.2.2: re-check on an upgrade.
     /// An instance of a const-generic enum. Keleusma 0.2.2 records the layout of the
     /// generic definition only, without the instance's padding, so a value the host
     /// builds is packed with the wrong size. A value the script builds reads back.
@@ -298,6 +299,7 @@ impl Resolver {
             }
             return Ok(Ty::Opaque(name.to_string()));
         };
+        // KELEUSMA-0.2.2: re-check on an upgrade.
         // Keleusma 0.2.2 does not lay out a type-generic instance as its substituted
         // fields. A probe found an `Opaque` field in `Box<Word>`, a 16-byte body where
         // `Pair<Word, Text>` substituted needs 24, and a generic enum that fails to

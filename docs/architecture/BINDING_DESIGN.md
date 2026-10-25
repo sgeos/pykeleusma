@@ -14,6 +14,7 @@ or still a plan, and the risks are stated where the plan rests on an assumption.
 | Rust extension | `src/lib.rs`, built as `keleusma._keleusma` | Owns the Keleusma objects and converts values |
 | Python package | `python/keleusma/` | The public, typed interface, re-exporting the extension |
 | Type stub | `python/keleusma/_keleusma.pyi` | Types for the extension, kept in step with `src/lib.rs` |
+| Compatibility | `src/compat.rs` | Every Keleusma call whose signature differs on the 0.2.3 branch, as `MIGRATION_V0_2_3.md` describes |
 
 The extension uses PyO3 with the stable ABI from Python 3.12, so one wheel per platform
 serves every later Python. maturin builds it.
@@ -34,6 +35,8 @@ serves every later Python. maturin builds it.
 | `module.to_bytes()`, `keleusma.load_module(data)` | `Module::to_bytes`, `Module::from_bytes` and the `wire_format` signing and encryption functions |
 | `vm.replace_module(module)` | `Vm::replace_module`, with the trust matrix enforced by the binding, as described under Book coverage |
 | `vm.register_verifying_key(key)` | `Vm::register_verifying_key`, mirrored by the binding |
+| `vm.read_shared()`, `vm.write_shared(values)` | The binding's flat decoder and encoder, checked against `DataLayout::shared_layout` |
+| `vm.wcet_per_iteration_with(op_cycles)` | `verify::module_wcet_with_bounds` with a `CostModel` built from the host's table |
 | Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, raised as `VerifyError` or `VMError` as described under Arena sizing |
 
 `Vm` is `GenericVm<'a, 'arena, i64, u64, f64>` and `Value` is `GenericValue<i64, f64>`.
@@ -186,8 +189,11 @@ in `keleusma._native`, the README and this document, and implies nothing stronge
 - **Re-entry** into the same VM from a native is refused by PyO3's borrow checking with
   an exception. The registry is borrowed only to clone the callable, so no borrow is
   held while Python runs.
-- **Not supported.** `use external` natives, which Keleusma classifies differently, are
-  refused at construction.
+- **Not supported.** `use external` natives are refused at construction. Keleusma
+  serves one only through `register_external_native`, which takes a plain function
+  pointer with no context, so a Python callable cannot be attached, and a text or
+  composite argument could not be read without the arena. Keleusma was asked for a
+  closure-based form.
 
 **Evidence.** 24 tests cover calls, typed and untyped conversion, exception identity,
 re-entry, registration, bounds and the collected cycle. Three mutations each made tests
@@ -197,7 +203,7 @@ binding's record, and it now also checks the time figure, which reads Keleusma's
 
 **Inference.** Opaque host values do not change the sizing. In an arena-resident
 composite, Keleusma stores an opaque as an index into a registry on the VM, so its arena
-cost is one word. Opaques are outside 0.1.0 in any case.
+cost is one word. The book coverage section describes their conversion.
 
 ## Calling and resuming, roadmap task 5
 
@@ -334,10 +340,19 @@ update loop, the figures it budgets with.
 - **Time units.** Keleusma 0.2.2 counts time in nominal cycles, the pipelined-cycle
   costs its nominal cost model assigns to each instruction, as the book's chapter 38
   describes. They are not the cycles of any particular processor, and not seconds.
-  Converting them needs a calibrated or measured cost model, which Keleusma 0.2.2 does
-  not ship and the binding therefore does not expose. An earlier revision of this
-  document called the units unitless and not cycles, which the operator corrected on
-  2026-10-25.
+  An earlier revision of this document called the units unitless and not cycles,
+  which the operator corrected on 2026-10-25.
+- **Other cost models.** `vm.wcet_per_iteration_with(op_cycles, text_byte_cycles=...)`
+  applies a cost table of the host's, keyed by the opcode names in `keleusma.OP_NAMES`,
+  with every unnamed opcode at its nominal cost. Keleusma 0.2.2 has the `CostModel`
+  type and its analysis functions but ships only the nominal table. A measured table,
+  such as Keleusma's benchmark crate generates for a processor, can be passed this way.
+  `CostModel` takes a plain function pointer, so the table reaches it through a
+  thread-local that is set for the duration of the analysis and restored afterwards.
+  The binding computes the nominal figure by the same path first and refuses the
+  result if it differs from Keleusma's own, which would mean the native bounds were
+  assembled differently. An earlier revision said Keleusma has no cost model API,
+  which was wrong.
 - **No stream, no figure.** Keleusma returns zero for a module without a stream chunk, so
   a `fn main` or a `yield main` would read as free. The binding returns `None` for
   those instead.
@@ -376,7 +391,11 @@ is valid only until the next call or resume.
 | Enum | `keleusma.Variant(name, values)` | A `Variant`, or the name of a variant without fields |
 | `Option<T>` | `None` or the value | `None` or a value of `T` |
 | Newtype | Its underlying type | Its underlying type, except a refined newtype, which raises `TypeError` |
-| Generic struct or enum, nested option | Not converted, `TypeError` naming the type | Not supported |
+| `Multiword<N, F>` | `int`, or `Fraction` when `F` is not zero | Any exact number in range, else `OverflowError` or `ValueError` |
+| A type the program does not define | The Python object passed in | Any Python object, carried as an opaque host value |
+| Const-generic struct | As its instance | As its instance |
+| Const-generic enum | As its instance | Not accepted, as described under Book coverage |
+| Type-generic struct or enum, nested option | Not converted, `TypeError` naming the type | Not supported |
 
 A `bool` is never accepted where a number is declared, although Python treats it as an
 `int`, because passing `True` as a count is more often a mistake than an intent.
@@ -447,10 +466,13 @@ have required reimplementing the arithmetic.
 **Implemented on 2026-10-25,** at the operator's request that the binding cover the
 functionality the Keleusma book describes. The ten example scripts of the 0.2.2 crate
 run through the binding with their stated results, in `tests/test_book.py`. Of the 73
-programs in the book, a survey ran 41, while 12 needed arguments or natives the survey
-did not supply and 20 were fragments or were rejected by Keleusma's own compiler. None
-failed because of the binding. The survey is not exhaustive, because the 32 programs
-it did not run were not checked further.
+programs in the book, a first survey ran 41 without arguments. A second pass on
+2026-10-25 ran the 14 that needed arguments, natives or signing, with suitable inputs.
+Two of those needed binding work, opaque host values for the embedding guide's
+`RustString` example and a typed `use` line for a native taking an array, which the
+binding's message already asks for. The remaining 18 were fragments, programs the book
+shows Keleusma rejecting, programs Keleusma's own compiler refuses, or the text
+concatenation discrepancy. None failed because of the binding.
 
 **Recoverable native errors.** A native raises `keleusma.NativeError(code, message)` to
 report an error the script may handle with `host::f(x) { ok(v) => ..., error(code) =>
@@ -489,10 +511,16 @@ that they are robust. **Fact.** Keleusma 0.2.2 can crash in its safe decode on a
 program its own compiler accepts, which `v0.2.3` confirmed in
 `v023-20261025-yield-soundness-reply`. **Inference.** A loaded module converts values
 only by their own tags and refuses composites, which avoids the known crash route, but
-that does not show the decoder is safe on crafted input. **Not done.** No fuzzing of
-`load_module`. Unsigned bytes should therefore come only from a source trusted as the
-script's source would be. A signature establishes the producer and protects only as
-far as the holders of the trusted keys are trusted.
+that does not show the decoder is safe on crafted input. **Fuzzing.**
+`tools/fuzz_load_module.py` loads, builds and runs mutated modules with a repaired
+checksum. Its first 60,000 cases found one crash, a stack overflow in Keleusma's
+`module_runtime_footprint`, which recursed without bound on a malformed control-flow
+graph that Keleusma's verifier rejects. The binding sized the arena before Keleusma
+verified the module, so it now runs the structural verifier first, and a following
+run of 300,000 cases found no crash. That is evidence, not proof. Unsigned bytes
+should therefore still come only from a source trusted as the script's source would
+be. A signature establishes the producer and protects only as far as the holders of
+the trusted keys are trusted.
 
 **Library declarations.** Keleusma's compiler takes a script's `use math::sqrt(...)`
 line on trust and does not compare it with the library's signature. A library native
@@ -516,10 +544,14 @@ boundary.** The cryptography is Keleusma's, through `ed25519-dalek`, `x25519-dal
 `aes-gcm`. The binding implements no primitive. A signing seed or decryption key passed
 from Python lives in a `bytes` object the binding cannot zero.
 
-**Hot swap.** `vm.replace_module(module)` at an iteration boundary, after `Reset` or
-`Finished`, the book's chapter 37. Shared data survives a swap with the same layout,
-and Keleusma refuses a swap that changes it. Private data starts as `()`, so state is
-not carried forward through private slots. A native the new module adds must be
+**Hot swap.** `vm.replace_module(module, private=None)` at an iteration boundary, after
+`Reset` or `Finished`, the book's chapter 37. Shared data survives a swap with the same
+layout, and Keleusma refuses a swap that changes it. Private data starts as `()`, the
+state a fresh 0.2.2 VM starts in, unless `private` maps field names to values, which
+Keleusma takes from the host at the swap. Only scalar fields and arrays of scalars can
+be seeded, because Keleusma clears the composite body pool after writing the slots, and
+Keleusma has no accessor to read the old module's private values, so the host carries
+state forward only as far as it knows it. A native the new module adds must be
 registered before the next call. Every native the host serves gets a fresh closure
 with the new module's declaration, because a closure converts by the declaration of
 the module it was built for, and a stale one built values of the old type until
@@ -542,13 +574,47 @@ Keleusma 0.2.2 shape the implementation, each verified with a pure Rust probe.
 - `Vm::replace_module` ignores the trust matrix, so an unsigned module would replace
   signed code on a VM that trusts keys. The binding keeps its own copy of the matrix and
   refuses an unsigned swap once any key is trusted, the policy Keleusma's signed loader
-  states. An encrypted module cannot be swapped in, because its signature covers the
-  encrypted form, which is gone after decryption.
+  states. An encrypted module keeps its encrypted bytes, and Keleusma verifies their
+  signature without the decryption key, so it swaps in under the same check.
 
-**Not supported.** `use external` natives, generic structs and enums, nested options,
-refined newtypes as inputs, the multiword big-number types, typed access to shared data
-other than bytes, and calibrated or measured cost models, which Keleusma 0.2.2 does not
-ship.
+**Opaque host values.** A type the program names but does not define is an opaque host
+type to Keleusma's type checker, as the book's embedding guide describes. Any Python
+object converts to one and the same object comes back, as a whole value, inside boxed
+or flat composites, through yields and through natives. A flat composite stores an
+opaque as an index into the VM's registry, which Keleusma keeps private. Natives
+receive it in `NativeCtx`, and for a result the binding resolves the index through
+`Vm::decode`, the only public path, as `compat::resolve_opaque` records. Each crossing
+wraps the object anew, so a script comparing two crossings of one object sees two
+values. An opaque value is unbounded Python memory, outside Keleusma's guarantees like a
+Python native, and Keleusma counts it as zero arena bytes.
+
+**Multiword big numbers.** `Multiword<N, F>` is `N` words, least significant first,
+holding a signed two's complement integer, scaled by `2**F`, which a probe confirmed
+by comparing a negative value with zero. It converts to an `int`, or to an exact
+`Fraction` when `F` is not zero, by the exact-number rules of `keleusma.Fixed`.
+
+**Typed shared data.** `vm.read_shared(buffer=None)` and `vm.write_shared(values,
+buffer=None)` convert the shared block's fields by their declared types, in the VM's
+own block or in a host buffer. Keleusma lays the block out as a packed struct of its
+fields and records each slot's offset, one slot per element for an array field. The
+binding compares every recorded offset with its own layout when a VM is built or
+swapped and refuses typed access on any difference. A write converts every value before
+changing a byte. Keleusma's own per-slot accessors handle only scalars, so the binding
+reads with its flat decoder and writes with a flat encoder that passes only scalars to
+`write_scalar_le`, which panics on anything else.
+
+**Generic types.** A const-generic struct converts as its instance, whose name
+monomorphization builds as `Buf__c3` for `Buf<3>`, which the binding reproduces so a
+host-built value is recognised. A const-generic enum leaves the script but cannot come
+in, because Keleusma 0.2.2 records only the generic definition's layout, without the
+instance's padding, which a probe showed. A type-generic instance is refused, because
+Keleusma 0.2.2 does not lay it out as its substituted fields. A probe found an `Opaque`
+field in `Box<Word>` and a short body for `Pair<Word, Text>`, and a generic enum
+failed to type-check after monomorphization.
+
+**Not supported.** `use external` natives, type-generic structs and enums, nested
+options, refined newtypes and const-generic enums as inputs, composite private fields
+when seeding a swap, and reading the old module's private values.
 
 ## Threading
 
@@ -585,6 +651,14 @@ is a discrepancy between Keleusma and its book, not a binding defect.
 **Hot swap.** Three defects in `Vm::replace_module` and `Vm::replace_module_from_bytes`,
 described under Book coverage, which the binding works around.
 
+**Footprint analysis on unverified modules.** Keleusma 0.2.2's
+`module_runtime_footprint` overflows the stack on a module whose control flow its
+verifier rejects. The binding verifies first, as described under Book coverage.
+
+**Generic layouts.** Keleusma 0.2.2 records only a const-generic enum's generic layout,
+and lays out type-generic instances other than as their substituted fields, as
+described under Book coverage.
+
 **Miri with Stacked Borrows.** On 2026-10-24, running the Rust tests under Miri's
 default Stacked Borrows model reported undefined behaviour inside rkyv 0.8.18,
 `ArchivedStringRepr::check_bytes`, reached from `Vm::new` while validating the archived
@@ -601,9 +675,8 @@ depends on 0.2.2.
 - **NumPy without copying.** `Vm::call_with_shared(&mut [u8], ...)` lends the VM a shared
   data buffer for one call. A NumPy array exposed through the buffer protocol could be
   that buffer.
-- **Typed shared data.** Reading and writing the shared block by its declared fields,
-  rather than as bytes.
-- **Carrying private data across a hot swap,** which needs Keleusma's private values
-  converted out and back in.
-- **Wheels for Linux, macOS and Windows,** built in continuous integration with
-  maturin's GitHub Action.
+- **Carrying private data across a hot swap,** which needs an accessor for the old
+  module's private values from Keleusma.
+- **Publishing wheels.** `.github/workflows/wheels.yml` builds and smoke-tests wheels
+  for Linux, macOS and Windows on every pull request, and publishing to PyPI needs the
+  operator's confirmation in session.

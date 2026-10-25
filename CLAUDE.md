@@ -12,23 +12,22 @@ time and memory use. The goal is to run Keleusma scripts inside Python programs,
 PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and the import
 package is `keleusma`.
 
-**Status.** Cut on 2026-10-24. The extension builds against the published Keleusma 0.2.2.
-Tasks 1 to 12 of the first milestone are done. `keleusma.compile` works with located
-errors, `keleusma.VM` verifies a module and owns a correctly sized arena, values convert
-by declared type, `vm.call`, `vm.resume` and `vm.stream` run scripts, Python natives work
-with declared bounds, shared data blocks are kept by the VM and synced with host
-buffers, the worst-case figures are readable, three examples run in tests, the README
-states the guarantee boundary, and GitHub Actions checks every push and pull request.
-Task 12 covers what the Keleusma book describes, including structs and enums, native
-errors, libraries, signed and encrypted bytecode and hot swap. The first milestone is
-[`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design is
-[`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
+**Status.** Cut on 2026-10-24. Version 0.1.0 builds against the published Keleusma 0.2.2,
+and tasks 1 to 13 of the first milestone are done. The binding covers what the Keleusma
+book describes, except what is blocked on Keleusma. CI tests Linux, macOS and Windows,
+and wheels are built but not published. The milestone is
+[`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md), the design is
+[`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md), and the move to
+0.2.3 is planned in
+[`docs/architecture/MIGRATION_V0_2_3.md`](docs/architecture/MIGRATION_V0_2_3.md).
 
 **Relationship to Keleusma.** This repository depends only on the crates.io release, pinned
 exactly as `keleusma = "=0.2.2"`. Never build against a Keleusma checkout and never edit
 the Keleusma repository. Moving to a later release is a deliberate change, because
-Keleusma 0.2.3 changes `BYTECODE_VERSION` from 1 to 2. Questions about Keleusma go to the
-Keleusma lines through the mailbox described in `docs/process/HANDOFF.md`.
+Keleusma 0.2.3 changes `BYTECODE_VERSION` from 1 to 2. Calls that 0.2.3 changes live in
+`src/compat.rs`, and every 0.2.2 workaround is marked `KELEUSMA-0.2.2`. Questions about
+Keleusma go to the Keleusma lines through the mailbox described in
+`docs/process/HANDOFF.md`.
 
 **The guarantee boundary.** Keleusma's worst-case bounds cover the script and the bounds
 declared for each native. A Python callable registered as a native has no bound. The

@@ -64,6 +64,13 @@ impl Widths {
     }
 }
 
+/// The byte offset Keleusma records for a shared slot, or `None` if it does not fit
+/// a `usize`. KELEUSMA-0.2.2: the field is a `u16`. 0.2.3 widens it to `u32`, which
+/// `usize::try_from(slot.offset).ok()` reads, and that conversion replaces this one.
+pub fn shared_slot_offset(slot: &keleusma::bytecode::SharedSlotLayout) -> Option<usize> {
+    Some(usize::from(slot.offset))
+}
+
 /// Resolve an opaque registry index through `decode`, Keleusma's only public path to
 /// the registry.
 ///
