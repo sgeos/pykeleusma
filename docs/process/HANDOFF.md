@@ -13,21 +13,21 @@ completed, moved or abandoned.
 - **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
   and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
   local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
-- **Tasks 1 to 8 done.** `keleusma.compile` returns a `Module`, which keeps the declared
-  types of `main` and its natives, or raises a located `SourceError`. `keleusma.VM`
-  verifies the module and owns its arena. `vm.call`, `vm.resume` and `vm.stream` run it.
-  Python natives are passed in `natives=` or through `vm.register`, with bounds that
-  size the arena or are refused. `vm.wcet_per_iteration` and `vm.arena_capacity` give
-  the worst-case figures. Three examples in `examples/` run in tests.
+- **Tasks 1 to 11 done.** Everything the 0.1.0 milestone lists is implemented and
+  merged: compilation with located errors, verified construction with a sized arena,
+  value conversion by declared type, `call`, `resume` and `stream`, Python natives with
+  declared bounds, the worst-case figures, three examples, the README's guarantee
+  boundary, continuous integration, and shared data blocks lent as host buffers, which
+  was added as task 11 at the operator's instruction.
 - **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 - **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Next step
 
-Task 9, the README's statement of the guarantee boundary, that worst-case bounds cover
-the script and declared native bounds, not Python code. Most of the text exists in the
-README and the design, so the task is to state it in one clear place.
+The 0.1.0 milestone's tasks are complete. A release to PyPI needs the operator's
+confirmation in session. Candidate follow-ups are a typed view of shared data blocks,
+recovery of a failed VM through `reset_after_error`, and the replies `v0.2.3` owes.
 
 ## Open
 
@@ -74,7 +74,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 193 tests pass
+uv sync && uv run pytest    # 210 tests pass
 cargo test                  # 27 Rust tests pass
 ```
 

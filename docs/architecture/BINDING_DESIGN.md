@@ -251,24 +251,40 @@ therefore ends on `Finished`.
 `yield from`, a loop's `Reset` boundaries, a unit stream in a plain `for` loop, early
 exit, and errors. A mutation that kept iterating past `Finished` made five tests fail.
 
-## Data segments
+## Data segments, roadmap task 11
 
-Reported by the `pydromon` line on 2026-10-25 as `pydromon-20261025-data-segment-gap`.
+Reported by the `pydromon` line on 2026-10-25 as `pydromon-20261025-data-segment-gap`,
+and requested on the operator's instruction as `pydromon-20261025-data-segment-request`.
 
-- **Fact, private data starts as `()`.** Keleusma 0.2.2 initialises each private slot to
-  `Unit`, as its own source states at `vm.rs:1141` and `vm.rs:2082`, so reading a field
-  before assigning it fails at run time. The same failure appeared through the Rust API
-  alone in task 1, so the binding is not the cause. The Keleusma book, chapter 18, says
-  the segment begins zeroed, which disagrees, and that was sent to `v0.2.3`. A test pins
-  the behaviour.
-- **Shared `data` blocks are not supported.** Keleusma lends a shared block to each call
-  as a host buffer, through `call_with_shared` and `resume_with_shared`, which the
-  binding does not expose. Such a module is refused at construction with `VerifyError`,
-  rather than failing at its first call with a message naming Rust-only API. Exposing
-  the buffer, for example as a `bytearray` or a NumPy array, is possible future work,
-  close to the zero-copy NumPy item under Later.
-- **Practice.** Assign private fields before reading them, or carry state through the
-  stream's input and output, as the NumPy example and Dromon's drivers do.
+- **Fact, private data starts as `()` and persists.** Keleusma 0.2.2 initialises each
+  private slot to `Unit`, as its own source states at `vm.rs:1141` and `vm.rs:2082`, so
+  reading a field before assigning it fails at run time. The same failure appeared
+  through the Rust API alone in task 1, so the binding is not the cause. Once assigned,
+  a private field keeps its value across iterations, so a script that initialises it on
+  its first iteration, for example from a flag in its input, keeps state inside the VM.
+  The Keleusma book, chapter 18, says the segment begins zeroed, which disagrees, and
+  that was sent to `v0.2.3`. A test pins the behaviour.
+- **Shared `data` blocks, implemented.** Keleusma lends a module's shared block to each
+  call as a host buffer, through `call_with_shared` and `resume_with_shared`. The binding
+  exposes it as `vm.call(*args, shared=buffer)`, `vm.resume(value, shared=buffer)` and
+  `vm.stream(..., shared=buffer)`, where `buffer` is any writable, contiguous buffer of
+  bytes of exactly `vm.shared_data_bytes` bytes, such as a `bytearray`, a `memoryview` of
+  one, or a NumPy `uint8` array. Omitting it for a module that declares a block, or
+  passing one for a module that does not, raises `TypeError` before the VM runs.
+- **Copy in, copy back.** The buffer is copied into a Rust vector before the call and
+  copied back after it succeeds. Lending the Python memory in place would let a Python
+  native write to it while Keleusma holds a mutable borrow of the same bytes, which Rust
+  forbids, and it would need `unsafe` code. So a native sees the buffer as it was before
+  the call, and a failed call leaves it unchanged. The cost is one copy each way.
+- **Layout.** Fields are packed little-endian in declaration order, with no padding, as
+  observed with `struct` in the tests: `Word` and `Float` take eight bytes, and `bool`
+  and `Byte` one. A typed view of the block is future work, because Keleusma's layout
+  table expands each array element into its own entry, so names and entries do not map
+  one to one.
+
+**Evidence.** 13 tests cover reading, writing, host changes between steps, the layout,
+streams, other buffer types, every refusal, rollback after a failure and the native's
+view. A mutation that skipped the copy back made seven of them fail.
 
 ## Examples, roadmap task 8
 

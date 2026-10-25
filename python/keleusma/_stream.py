@@ -29,16 +29,27 @@ from keleusma._state import Finished, Reset, Yielded
 
 
 class _Resumable(Protocol):
-    def call(self, *args: object) -> Yielded | Finished | Reset: ...
-    def resume(self, value: object) -> Yielded | Finished | Reset: ...
+    def call(
+        self, *args: object, shared: object | None = None
+    ) -> Yielded | Finished | Reset: ...
+    def resume(
+        self, value: object, *, shared: object | None = None
+    ) -> Yielded | Finished | Reset: ...
 
 
 def stream(
-    vm: _Resumable, *args: object, inputs: Iterable[object] | None = None
+    vm: _Resumable,
+    *args: object,
+    inputs: Iterable[object] | None = None,
+    shared: object | None = None,
 ) -> Generator[Yielded | Reset, object, object]:
-    """Call `vm` with `args` and resume it until it finishes or `inputs` runs out."""
+    """Call `vm` with `args` and resume it until it finishes or `inputs` runs out.
+
+    `shared`, if given, is lent to every call and resume as the module's shared `data`
+    block, so the host can read and change it between steps.
+    """
     feed = None if inputs is None else iter(inputs)
-    state = vm.call(*args)
+    state = vm.call(*args, shared=shared)
     while not isinstance(state, Finished):
         sent = yield state
         if feed is None:
@@ -52,5 +63,5 @@ def stream(
                 value = next(feed)
             except StopIteration:
                 return None
-        state = vm.resume(value)
+        state = vm.resume(value, shared=shared)
     return state.value

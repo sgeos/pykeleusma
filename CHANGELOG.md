@@ -7,8 +7,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
-- A module with a shared `data` block is refused at construction with a clear
-  `VerifyError`, instead of failing at its first call.
+- Shared `data` blocks, lent to each call as a host buffer through `shared=` on
+  `vm.call`, `vm.resume` and `vm.stream`, with `vm.shared_data_bytes`. The buffer is
+  copied in and copied back after a successful call.
+- The README's section "What is guaranteed, and what is not", stating that Keleusma's
+  bounds cover the script and declared native bounds, never Python.
 
 - Three examples in `examples/`, a PyGame frame loop, a NumPy reduction and a batched
   update loop in Dromon's event and action shape, each run by a test, with NumPy and

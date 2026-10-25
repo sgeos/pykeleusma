@@ -4,47 +4,38 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, tasks 1 to 8
+## 2026-10-25, issues from other lines and tasks 1 to 9
 
-**Goal.** Complete all tasks from 1 to 8, skipping those already done, then commit,
-push and merge all work.
+**Goal.** Attend to issues raised by other lines, complete all tasks from 1 to 9,
+skipping those already done, then commit, push and merge all work.
 
-**Already done.** Tasks 1 to 7, merged through pull requests 1 to 10. Only task 8
-remained.
+**Issues from other lines.** One message was waiting, `pydromon-20261025-data-segment-request`,
+in which `pydromon`, on the operator's instruction, asked for shared data support and an
+answer of accepted, declined or deferred.
 
-**Done, task 8.** Three examples in `examples/`, each run by `tests/test_examples.py`.
+- **Accepted and implemented, as roadmap task 11.** `vm.call`, `vm.resume` and
+  `vm.stream` take `shared=`, a writable byte buffer of `vm.shared_data_bytes` bytes,
+  lent to Keleusma as the module's shared `data` block. The buffer is copied in and
+  copied back after a successful call, which needs no `unsafe` code and keeps a Python
+  native from writing to memory Keleusma is mutating. A failed call leaves it unchanged.
+- **Corrected premise.** The request said private data is reset to `()`. It starts as
+  `()`, but it persists across iterations once assigned, which was verified, so a
+  script can already keep state inside the VM by initialising a field on its first
+  iteration. The reply says so.
+- **Not done.** A typed view of the shared block, because Keleusma's layout table
+  expands array elements, so names and entries do not map one to one.
 
-- `batched_update_loop.py`. A hundred session lines on one thread, each resumed once per
-  tick, with Dromon's tagged-tuple events and actions, and a tick budget that is the sum
-  of the processors' `wcet_per_iteration`.
-- `numpy_reduction.py`. A NumPy array's mean and variance, passed as lists of eight
-  floats per iteration, matching `numpy.mean` and `numpy.var` in tests.
-- `pygame_frame_loop.py`. A bouncing ball whose physics runs in Keleusma. The window is
-  the documented manual check, and the tests run it headless with SDL's dummy drivers.
+**Already done.** Tasks 1 to 8. Only task 9 remained.
 
-NumPy 2.5.4 and `pygame-ce` 2.5.8 joined the development dependencies. `pygame-ce` was
-chosen over `pygame`, whose 2.6.1 release has no wheels past Python 3.13, while the
-matrix tests 3.15.
+**Done, task 9.** The README's new section "What is guaranteed, and what is not" states
+that Keleusma's bounds cover the script and the bounds declared for each native, never
+Python, that native bounds are promises rather than limits, what units the figures use,
+and which limits are empirical in this release. A test pins those claims and runs the
+README's usage example.
 
-**Deviation, for the operator.** The roadmap asks for a frame loop that "resumes once per
-frame". Under Keleusma 0.2.2 that is not possible with a stream. Every stream must yield,
-so a yield-free iteration is rejected, and an inner loop around a yield has no static
-bound, so it is rejected too. Each iteration is therefore one yield and one `Reset`, and
-the example advances one iteration per frame, which is two resumes. Calling `main` again
-each frame also works, but restarting a suspended stream is behaviour I have not verified
-as safe over many frames, so the example does not rely on it. The roadmap records this.
+**Verification.** 210 Python tests and 27 Rust tests passed locally. A mutation that
+skipped copying the shared buffer back made seven tests fail. `ruff`, `pyright`,
+`cargo fmt` and `cargo clippy` were clean.
 
-**Also, from `pydromon`.** Its notice `pydromon-20261025-data-segment-gap` reported that
-private data reads `()` before assignment and that shared `data` blocks cannot be driven.
-The first is Keleusma 0.2.2's documented behaviour, now pinned by a test. Its book says
-otherwise, which went to `v0.2.3`. For the second, the binding now refuses such a module
-at construction with a clear `VerifyError`. Exposing the shared buffer is future work.
-Both are recorded under Data segments in the design, and `pydromon` was answered.
-
-**Verification.** 193 Python tests and 27 Rust tests passed locally, with pyright in
-strict mode covering the examples. All three examples were run from the command line.
-
-**Not run.** The PyGame window itself, which needs a display. Run
-`uv run python examples/pygame_frame_loop.py` to see it.
-
-**Next.** Task 9, the statement of the guarantee boundary.
+**Next.** All of the 0.1.0 milestone's tasks are done. A PyPI release needs the
+operator's confirmation in session.
