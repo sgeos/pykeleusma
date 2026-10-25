@@ -13,26 +13,31 @@ completed, moved or abandoned.
 - **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
   and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
   local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
-- **Tasks 1, 2 and 3 done.** `keleusma.compile` returns a `Module` or raises a located
-  `SourceError`. `keleusma.VM(module, *, argument_bytes=4096)` verifies the module,
-  raising `VerifyError` with the verifier's message, and owns an arena of footprint,
-  persistent region, an empirical regrowth margin and the argument budget. The private
-  method `VM._call_no_args` is a test hook that task 5 replaces with `call`.
+- **Tasks 1 to 4 done.** `keleusma.compile` returns a `Module`, which keeps the declared
+  types of `main`, or raises a located `SourceError`. `keleusma.VM` verifies the module
+  and owns its arena. Values convert by declared type, with `keleusma.Fixed` for
+  fixed-point numbers. The private method `VM._call(*args)` is a test hook that task 5
+  replaces with `call` and `resume`.
+- **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
+  safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 - **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Next step
 
-Task 4, value conversion, decoding composites by the entry point's declared types read
-from the parsed program. That needs `Module` to keep the program's type information,
-which `keleusma.compile` currently discards.
+Task 5, `vm.call`, `vm.resume` and the state result, replacing `VM._call`. The resume
+input converts by the type of the stream's parameter, which `Module` already keeps.
 
 ## Open
 
+- **Yield guard is partial.** A yielded expression with no recorded type is not
+  compared. No crash was found past the guard, but only a Keleusma fix closes it.
 - **Arena margin is empirical.** Task 3 covers the observed shortfall of one operand
   stack doubling, with at least 48 bytes to spare in every script measured. It is not
   a proven bound. A Rust test fails if Keleusma fixes its footprint, prompting a review.
 - **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, covering arena
-  margins, a yield type-check gap and how a dynamic host decodes flat composites. The
+  margins, a yield type-check gap and how a dynamic host decodes flat composites.
+  High-priority request `pykeleusma-20261025-yield-soundness`, reporting that the type
+  gap reaches undefined behaviour through Keleusma's safe decode. The
   interim reply `v023-20261025-dynamic-host-interim` says nothing is checked against
   0.2.3 yet, that the arena and type findings would be defects if they reproduce, and
   that a host margin is a workaround, not a supported bound.
@@ -64,8 +69,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 34 tests pass
-cargo test                  # 15 Rust tests pass
+uv sync && uv run pytest    # 123 tests pass
+cargo test                  # 25 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

@@ -177,62 +177,89 @@ module's worst-case memory use, so it must be known when the arena is sized.
   `Arc<dyn HostOpaque>` fat pointer itself, so its arena cost is one word. Opaques are
   outside 0.1.0 in any case.
 
-## Values
+## Values, roadmap task 4
 
-Converted eagerly in both directions, because in 0.2.2 a composite result lives in the
-VM's arena and must be read before the next `resume` or before the VM is dropped.
+**Implemented on 2026-10-25.** Values convert by the entry point's declared types, in
+`src/convert.rs`, with the types read in `src/types.rs`. A result is converted before
+anything else runs on the VM, because in 0.2.2 a composite result lives in the arena and
+is valid only until the next call or resume.
 
-| Keleusma | Python |
-|---|---|
-| `Unit` | `None` |
-| `Bool` | `bool` |
-| `Int`, 64-bit | `int`, with `OverflowError` on the way in |
-| `Byte` | `int` in 0 to 255, checked on the way in |
-| `Float`, 64-bit | `float` |
-| `StaticStr` and strings | `str` |
-| Tuples and arrays | `tuple` and `list` |
-| `Fixed` | `keleusma.Fixed`, an immutable exact value, as described below |
-| Structs and enums | Open, possibly dictionaries or generated classes, after 0.1.0 |
+| Keleusma | Python out | Accepted in |
+|---|---|---|
+| `()` | `None` | `None` |
+| `bool` | `bool` | `bool` only |
+| `Byte` | `int` | `int` in 0 to 255, else `OverflowError` |
+| `Word` | `int` | `int` in the signed 64-bit range, else `OverflowError` |
+| `Fixed<N>` | `keleusma.Fixed` | Any exact number, else `ValueError` or `OverflowError` |
+| `Float` | `float` | `float` or `int` |
+| `Text` | `str` | `str` only |
+| Tuple | `tuple` | A `tuple` of the declared length |
+| Array | `list` | A `list` or `tuple` of the declared length |
+| Named types, options | Not converted, `TypeError` naming the type | After 0.1.0 |
+
+A `bool` is never accepted where a number is declared, although Python treats it as an
+`int`, because passing `True` as a count is more often a mistake than an intent.
 
 ### Composite values
 
-**Fact.** Keleusma 0.2.2 stores a tuple or array of scalars and literal strings as flat
-bytes with no per-field types. `TupleBody::elements()` panics on that form, so the binding
-must never call it on a value it has not checked. `ChunkSignature` records only the kind
-and byte size of a flat composite.
+**Fact.** Keleusma 0.2.2 stores a tuple or array of scalars and text as a flat byte body
+with no per-field types. `TupleBody::elements()` panics on that form, so the binding never
+calls it. `ChunkSignature` records only the kind and byte size of a flat composite.
 
-**Planned for task 4.** Decode by the entry point's declared parameter and yield types,
-read from the parsed program that `keleusma.compile` already holds, and encode arguments
-the same way. Whether `value_layout::LayoutDescriptor` matches the compiler's layout is
-asked of `v0.2.3`. Until that is answered, round-trip tests of every supported shape are
-the evidence.
+**Implemented.** `keleusma.compile` keeps the declared parameter and return types of
+`main` from the parsed program. A flat body is read by those types, at offsets from
+Keleusma's own `value_layout::LayoutDescriptor`. The compiler takes its layouts from the
+same descriptor, through its type checker's `layout_for`, so the module documentation's
+claim that no runtime path uses it is out of date. A body whose length differs from the
+declared layout raises `keleusma.VMError` rather than being misread. A `Text` field is
+read with Keleusma's `<String as KeleusmaType>::from_flat_bytes_ctx`, given an empty
+opaque registry, which is sound because the converted types contain no opaque values.
+
+**Evidence.** Round trips pass for every shape in the probe recorded for Dromon, through
+an echo stream and through composites the script builds, which are the flat ones. A
+mutation that read every field at offset zero crashed the interpreter, which is how the
+defect below was found.
+
+### Mistyped yields, a memory-safety guard
+
+**Fact.** Keleusma 0.2.2's compiler and verifier accept a `yield` whose expression has a
+different type from the declared return type. With a same-size mistype, for example
+`yield (3, "wake")` where `(Text, Word)` is declared, Keleusma's safe `Vm::decode` reads
+the integer 3 as a text pointer, and the process dies with a segmentation fault. This
+was reproduced in plain Rust with no binding code, and reported to `v0.2.3` as
+`pykeleusma-20261025-yield-soundness`.
+
+**Implemented.** `src/yield_check.rs` repeats the compiler's type check,
+monomorphisation and recording type check after compilation succeeds, then compares the
+recorded type of every yielded expression with the declared return type, descending
+into tuple and array literals whose type as a whole was not recorded. A mismatch is a
+`keleusma.CompileError` at the yielded value. If the re-check itself fails, compilation
+fails closed.
+
+**Residual risk.** An expression with no recorded type is not compared. Keleusma's typed
+operand-stack pass rejects the composites built from values of unresolved type that
+were tried, and a top-level scalar keeps its tag, so a mismatch there raises `VMError`.
+No crash was found past the guard, but that is not proof. Only a fix in Keleusma's type
+checker closes it.
 
 ### Fixed-point values
 
 **Decided on 2026-10-24 by the operator.** `Fixed` converts to a sane Python equivalent,
-even if that equivalent carries metadata. The details were left to the binding.
+even if that equivalent carries metadata, and `float(value)` is the idiomatic way out.
 
 **Fact.** A runtime `Value::Fixed(i64)` carries only the raw bits. The number of fraction
-bits is part of the script's type, `Fixed<N>`, and is not stored in the value.
+bits is part of the script's type, `Fixed<N>`, which the binding now reads from the
+declaration. A bare `Fixed` takes the host target's default of 32 bits, as Keleusma's type
+checker substitutes it. `N` ranges over 0 to 62, the parser's limits.
 
-**Planned for task 4.** A frozen class `keleusma.Fixed` with two read-only attributes,
-`raw` as an `int` and `frac_bits` as an `int`. Its value is exactly `raw / 2**frac_bits`.
-It registers as a `numbers.Rational`, with `numerator`, `denominator`, `__float__`,
-`as_fraction()` returning a `fractions.Fraction`, and equality and hashing that agree with
-`Fraction` of the same value. Conversion to a float is spelled `float(value)`, through
-`__float__`, which is the Python idiom that `Fraction` and `Decimal` follow, rather than
-a `to_float()` method. `int(value)`, `round(value)` and `math.floor(value)` work the same
-way through the corresponding special methods. That is the standard library's convention for exact
-numeric types, so a `Fixed` mixes with `Fraction`, `int` and `float` as a Python user
-expects, and nothing is lost on a round trip. `float` was rejected because a 64-bit raw
-value does not fit the 53-bit mantissa, and a bare `Fraction` was rejected because it
-drops `frac_bits`, which the way back into the VM needs.
-
-**Open risk for task 4.** To return a `Fixed`, the binding must know `N` for the value
-being converted. Whether the compiled 0.2.2 module keeps enough type information to find
-`N` at a yield or a return is not yet established. If it does not, the fallback is for
-the host to state `N` when it calls, which is clumsier, and the question goes to the
-`v0.2.3` line first.
+**Implemented.** `keleusma.Fixed` in `python/keleusma/_fixed.py` subclasses
+`fractions.Fraction` and adds read-only `raw` and `frac_bits`. Equality, hashing,
+ordering, `float()`, `int()`, `round()` and `math.floor()` therefore behave as they do for
+the same rational. Arithmetic returns a plain `Fraction`, because fixed-width overflow
+and rounding are Keleusma's semantics. `Fixed.from_value(value, frac_bits)` converts any
+exact number and refuses rather than rounds, so a round trip is exact. Subclassing
+`Fraction` replaced the earlier plan to register with `numbers.Rational`, which would
+have required reimplementing the arithmetic.
 
 ## Threading
 
@@ -257,6 +284,9 @@ A native closure must take the GIL before it calls Python. Free-threaded Python 
 of scope for 0.1.0.
 
 ## Known issues in dependencies
+
+**Mistyped yields.** Described under Values. Keleusma 0.2.2's safe decode can segfault
+on a program its compiler accepts, and the binding guards against the known form.
 
 **Miri with Stacked Borrows.** On 2026-10-24, running the Rust tests under Miri's
 default Stacked Borrows model reported undefined behaviour inside rkyv 0.8.18,

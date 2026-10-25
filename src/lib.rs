@@ -2,12 +2,16 @@
 //!
 //! The binding is planned in `docs/architecture/BINDING_DESIGN.md`, and the first
 //! milestone in `docs/roadmap/V0_1_0.md`. Task 1, owning the arena and the VM together,
-//! lives in [`owned_vm`], task 2, compilation, in [`compile`], and task 3, the Python
-//! `VM` class, in [`vm`].
+//! lives in [`owned_vm`], task 2, compilation, in [`compile`], task 3, the Python `VM`
+//! class, in [`vm`], and task 4, value conversion by declared type, in [`convert`] and
+//! [`types`].
 
 mod compile;
+mod convert;
 mod owned_vm;
+mod types;
 mod vm;
+mod yield_check;
 
 use pyo3::prelude::*;
 
