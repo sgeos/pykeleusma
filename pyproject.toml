@@ -26,7 +26,17 @@ classifiers = [
 Keleusma = "https://github.com/sgeos/keleusma"
 
 [dependency-groups]
-dev = ["maturin==1.15.0", "pytest==9.1.1", "ruff==0.17.2", "pyright==1.1.414"]
+dev = [
+    "maturin==1.15.0",
+    "pytest==9.1.1",
+    "ruff==0.17.2",
+    "pyright==1.1.414",
+    # The examples' dependencies, so their tests run in continuous integration.
+    # pygame-ce installs as `pygame` and, unlike pygame 2.6, has wheels for every
+    # Python the matrix tests, up to 3.15.
+    "numpy==2.5.4",
+    "pygame-ce==2.5.8",
+]
 
 [tool.uv]
 # uv reinstalls the project only when one of these changes. Without the Rust
@@ -45,6 +55,8 @@ features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The examples are scripts, not a package, and their tests import them by name.
+pythonpath = ["examples"]
 
 [tool.ruff]
 line-length = 88
@@ -57,5 +69,6 @@ select = ["E", "F", "B", "S", "ANN", "RET", "SIM"]
 "tests/*" = ["S101"]
 
 [tool.pyright]
-include = ["python", "tests"]
+include = ["python", "tests", "examples"]
+extraPaths = ["examples"]
 typeCheckingMode = "strict"

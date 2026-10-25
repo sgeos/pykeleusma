@@ -13,25 +13,29 @@ completed, moved or abandoned.
 - **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
   and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
   local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
-- **Tasks 1 to 7 done.** `keleusma.compile` returns a `Module`, which keeps the declared
+- **Tasks 1 to 8 done.** `keleusma.compile` returns a `Module`, which keeps the declared
   types of `main` and its natives, or raises a located `SourceError`. `keleusma.VM`
   verifies the module and owns its arena. `vm.call`, `vm.resume` and `vm.stream` run it.
   Python natives are passed in `natives=` or through `vm.register`, with bounds that
-  size the arena or are refused, and a native's exception reaches the caller unchanged.
-  `vm.wcet_per_iteration` and `vm.arena_capacity` give the worst-case figures.
+  size the arena or are refused. `vm.wcet_per_iteration` and `vm.arena_capacity` give
+  the worst-case figures. Three examples in `examples/` run in tests.
 - **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 - **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Next step
 
-Task 8, the examples, a PyGame frame loop, a NumPy reduction and a batched update loop in
-Dromon's event and action shape, each run in a test or a documented manual check.
+Task 9, the README's statement of the guarantee boundary, that worst-case bounds cover
+the script and declared native bounds, not Python code. Most of the text exists in the
+README and the design, so the task is to state it in one clear place.
 
 ## Open
 
 - **Yield guard is partial.** A yielded expression with no recorded type is not
   compared. No crash was found past the guard, but only a Keleusma fix closes it.
+- **One iteration per frame, not one resume.** A Keleusma 0.2.2 stream iteration is
+  always one yield and one `Reset`, so task 8's frame loop resumes twice per frame. The
+  roadmap records the deviation.
 - **Arena margin is empirical.** Task 3 covers the observed shortfall of one operand
   stack doubling, with at least 48 bytes to spare in every script measured. It is not
   a proven bound. A Rust test fails if Keleusma fixes its footprint, prompting a review.
@@ -70,7 +74,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 178 tests pass
+uv sync && uv run pytest    # 193 tests pass
 cargo test                  # 27 Rust tests pass
 ```
 

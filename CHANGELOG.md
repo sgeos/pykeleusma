@@ -7,6 +7,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- A module with a shared `data` block is refused at construction with a clear
+  `VerifyError`, instead of failing at its first call.
+
+- Three examples in `examples/`, a PyGame frame loop, a NumPy reduction and a batched
+  update loop in Dromon's event and action shape, each run by a test, with NumPy and
+  `pygame-ce` added to the development dependencies.
+
 - Python natives through `VM(module, natives=...)`, `vm.register`,
   `vm.set_native_bounds` and `vm.native_bounds`, with `keleusma.Native` for declared
   bounds. Memory bounds size the arena or are refused, a native's exception reaches the

@@ -251,6 +251,48 @@ therefore ends on `Finished`.
 `yield from`, a loop's `Reset` boundaries, a unit stream in a plain `for` loop, early
 exit, and errors. A mutation that kept iterating past `Finished` made five tests fail.
 
+## Data segments
+
+Reported by the `pydromon` line on 2026-10-25 as `pydromon-20261025-data-segment-gap`.
+
+- **Fact, private data starts as `()`.** Keleusma 0.2.2 initialises each private slot to
+  `Unit`, as its own source states at `vm.rs:1141` and `vm.rs:2082`, so reading a field
+  before assigning it fails at run time. The same failure appeared through the Rust API
+  alone in task 1, so the binding is not the cause. The Keleusma book, chapter 18, says
+  the segment begins zeroed, which disagrees, and that was sent to `v0.2.3`. A test pins
+  the behaviour.
+- **Shared `data` blocks are not supported.** Keleusma lends a shared block to each call
+  as a host buffer, through `call_with_shared` and `resume_with_shared`, which the
+  binding does not expose. Such a module is refused at construction with `VerifyError`,
+  rather than failing at its first call with a message naming Rust-only API. Exposing
+  the buffer, for example as a `bytearray` or a NumPy array, is possible future work,
+  close to the zero-copy NumPy item under Later.
+- **Practice.** Assign private fields before reading them, or carry state through the
+  stream's input and output, as the NumPy example and Dromon's drivers do.
+
+## Examples, roadmap task 8
+
+**Implemented on 2026-10-25,** in `examples/`, each driven by `tests/test_examples.py`.
+
+| Example | Shows |
+|---|---|
+| `pygame_frame_loop.py` | A bouncing ball whose physics runs in Keleusma, one stream iteration per frame |
+| `numpy_reduction.py` | A mean and variance of a NumPy array, eight samples per iteration, passed as lists |
+| `batched_update_loop.py` | A hundred session lines on one thread, each resumed once per tick, with Dromon's tagged tuples and a tick budget |
+
+**Fact, iterations and frames.** A Keleusma 0.2.2 stream must contain a yield, and the
+verifier rejects an inner `loop` without a static iteration bound, so an iteration is
+one yield and one `Reset`. A host that wants one result per frame or tick therefore
+advances one iteration each time. The resume that completes the previous iteration
+returns `Reset`, and the next resume starts the new one. Each example has a short helper
+that does this.
+
+**Fact, accumulation.** Script bindings are immutable, and private data starts as `()`.
+The NumPy example passes its running sums in with each chunk and accumulates the chunk
+in private data with `for i in 0..8`, the range form the verifier bounds. Iterating an
+array field directly, `for x in e.0`, was rejected as unbounded, and `e.1.0` lexes as
+the float `1.0`, so the input tuple is flat.
+
 ## Worst-case figures, roadmap task 5b
 
 **Implemented on 2026-10-25.** Two properties give a scheduler, such as Dromon's batched

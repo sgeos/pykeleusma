@@ -130,6 +130,17 @@ impl VM {
         argument_bytes: usize,
         natives: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        // A shared `data` block lives in a host buffer lent to every call, which the
+        // binding does not provide, so such a module could not run. Refusing it here
+        // replaces a failure at the first call that names Rust-only API.
+        let shared = module.inner().shared_data_bytes;
+        if shared > 0 {
+            return Err(VerifyError::new_err(format!(
+                "the module declares a shared `data` block of {shared} bytes, which \
+                 pykeleusma 0.1.0 does not support; use `private data`, or pass state \
+                 through the stream's input and output"
+            )));
+        }
         let names = module.inner().native_names.clone();
         let boundary = module.boundary().clone();
         if let Some(external) = names

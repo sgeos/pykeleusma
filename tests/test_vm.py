@@ -207,3 +207,25 @@ def test_a_vm_created_on_a_worker_thread_runs_there() -> None:
         thread.join()
     assert errors == []
     assert results == [keleusma.Finished(42)] * 8
+
+
+def test_a_shared_data_block_is_refused_at_construction() -> None:
+    # Keleusma lends a shared block to each call as a host buffer, which the binding
+    # does not provide, so the module is refused before it could fail at a call.
+    module = keleusma.compile(
+        "data st { n: Word }\nloop main(e: Word) -> Word { let n = yield st.n; n }"
+    )
+    with pytest.raises(keleusma.VerifyError, match="shared `data` block"):
+        keleusma.VM(module)
+
+
+def test_private_data_starts_as_unit_not_zero() -> None:
+    # Pinned Keleusma 0.2.2 behaviour, which its own source documents. A script must
+    # assign a private field before reading it, or the read fails at run time.
+    module = keleusma.compile(
+        "private data st { n: Word }\n"
+        "loop main(e: Word) -> Word { st.n = st.n + 1; let n = yield st.n; n }"
+    )
+    vm = keleusma.VM(module)
+    with pytest.raises(keleusma.VMError, match="Unit"):
+        vm.call(1)
