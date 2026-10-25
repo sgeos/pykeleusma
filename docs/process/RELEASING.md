@@ -26,8 +26,9 @@ publishes is the operator's, and an agent prepares the release only up to the ta
    `uv run python tools/third_party_licenses.py` if `Cargo.lock` changed. Move the
    `Unreleased` section of `CHANGELOG.md` under a heading with the version and the
    date. Update the status statements in `README.md` and `CLAUDE.md`, including the
-   sentence that nothing is published yet before the first release. Merge through a
-   pull request once CI passes with full counts.
+   sentence that nothing is published yet before the first release. Label the pull
+   request `full-ci`, so that every CI job and every wheel runs, and merge it once they
+   pass with full counts.
 2. **Tag the merge commit.** `git tag -a v0.2.2.0 -m "pykeleusma 0.2.2.0"` on `main`,
    then `git push origin v0.2.2.0`. The tag must be the version with a leading `v`,
    because the publish job refuses files whose names do not match it.

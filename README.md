@@ -116,6 +116,8 @@ Windows, each on x86-64 and ARM64. On each, one wheel serves CPython 3.12 and la
 through the stable application binary interface, and free-threaded CPython 3.14t and
 3.15t, which run without the global interpreter lock, get a wheel each. Elsewhere, pip
 builds from the source distribution, which needs a Rust toolchain of at least 1.88.
+Continuous integration tests that path on FreeBSD 15.1, for which PyPI accepts no
+wheels.
 
 A VM belongs to the thread that creates it, and a compiled `Module` may be shared
 between threads. That holds with and without the global interpreter lock.

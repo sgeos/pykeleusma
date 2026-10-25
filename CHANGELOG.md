@@ -15,6 +15,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Continuous integration builds the source distribution on FreeBSD 15.1 and runs the
+  tests there. To share the account's runners, a pull request now runs a reduced set of
+  jobs and one quick wheel, the full set runs on `main`, on a pull request labelled
+  `full-ci`, and for packaging changes, the larger matrices are capped, and changes to
+  documentation alone run nothing.
+
 - A Limitations section near the top of the README. It separates the limitations that
   come from Keleusma 0.2.2, which are expected to clear with the public Keleusma 0.2.3,
   from those of the binding's own design, and warns that bytecode saved now will not

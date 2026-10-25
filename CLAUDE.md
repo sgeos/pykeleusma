@@ -64,8 +64,13 @@ operator has modified it.
 
 ## Git Workflow
 
-`main` is always green. Work happens on short-lived feature branches merged into `main` by
-a no-fast-forward merge once checks pass, through a pull request once a remote exists. Use
+`main` is kept green. Work happens on short-lived feature branches merged into `main` by
+a no-fast-forward merge once checks pass, through a pull request once a remote exists.
+GitHub runners are shared across the operator's account, so since 2026-10-25, at the
+operator's approval, a pull request runs a reduced set of jobs and a push to `main` runs
+the full set, as the headers of `ci.yml` and `wheels.yml` describe. A failure on
+`main` after a merge is fixed before any other work. Label a pull request `full-ci` to
+run the full set before merging, as for a release or a platform-specific change. Use
 scoped conventional commits such as `feat:`, `fix:`, `docs:`, `test:` and `chore:`.
 Commit messages carry no `Co-Authored-By` trailer, at the operator's instruction of
 2026-10-25.

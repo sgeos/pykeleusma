@@ -736,7 +736,9 @@ depends on 0.2.2.
 - **Carrying composite private data across a hot swap,** which needs Keleusma to keep
   or expose the composite pool. Scalar private data already carries across through
   `vm.private_data` and `replace_module(module, private=...)`.
-- **Publishing wheels.** `.github/workflows/wheels.yml` builds and smoke-tests wheels
-  for Linux, macOS and Windows and the source distribution on every pull request. It
+- **Publishing wheels.** `.github/workflows/wheels.yml` builds and smoke-tests every
+  wheel and the source distribution on a push to `main`, on a pull request that touches
+  packaging or is labelled `full-ci`, and on a version tag, and one Linux wheel on any
+  other pull request. It
   publishes only from a version tag the operator pushes, after the operator approves
   the `pypi` environment, as `docs/process/RELEASING.md` describes.

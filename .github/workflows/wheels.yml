@@ -1,5 +1,14 @@
-# Release wheels and the source distribution, built and smoke-tested on every pull
-# request, and published to PyPI only from a pushed version tag.
+# Release wheels and the source distribution, built and smoke-tested, and published to
+# PyPI only from a pushed version tag.
+#
+# GitHub-hosted runners share one concurrent-job limit across the account, so the full
+# matrix runs only where it is needed. The `plan` job chooses it for a version tag, a
+# push to main, a manual run, a pull request labelled `full-ci`, and a pull request
+# that touches a packaging path, listed in that job. Any other pull request builds one
+# Linux x86-64 wheel and smoke-tests it, which catches a stable-ABI or manylinux
+# failure that the development install in ci.yml does not exercise. A build failure on
+# another platform is then caught by the run on the push to main, and in any case by
+# the tag run before anything is published. Changes to documentation alone run nothing.
 #
 # Wheels cover Linux with glibc and with musl, macOS and Windows, each on x86-64 and
 # ARM64. Per platform, one stable-ABI wheel serves CPython 3.12 and later, and
@@ -20,8 +29,24 @@ name: Wheels
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - "docs/**"
+      - CHANGELOG.md
+      - CLAUDE.md
+      - AGENTS.md
+      - SECURITY.md
   push:
+    branches: [main]
+    # GitHub does not evaluate path filters for tag pushes, so a release tag always
+    # runs the full workflow.
     tags: ["v*"]
+    paths-ignore:
+      - "docs/**"
+      - CHANGELOG.md
+      - CLAUDE.md
+      - AGENTS.md
+      - SECURITY.md
   workflow_dispatch:
 
 permissions:
@@ -44,24 +69,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          # The files that decide what a wheel contains or how it is built.
+          PACKAGING: >-
+            ^(pyproject\.toml|Cargo\.toml|Cargo\.lock|LICENSE|THIRD_PARTY_LICENSES\.txt|tools/third_party_licenses\.py|python/keleusma/(__init__\.py|_keleusma\.pyi|py\.typed)|src/lib\.rs|\.github/workflows/wheels\.yml)$
+        run: |
+          set -eu
+          full=true
+          if [ "$EVENT" = pull_request ] && [ "$LABELLED" != true ]; then
+            # Against the merge commit, so a base that moved since the event only
+            # widens the comparison, which errs toward the full matrix.
+            changed="$(git diff --name-only "$BASE" HEAD)"
+            printf '%s\n' "$changed"
+            if ! printf '%s\n' "$changed" | grep -qE "$PACKAGING"; then
+              full=false
+            fi
+          fi
+          # Each build makes three wheels. One uses the stable ABI and serves CPython
+          # 3.12 and later with the GIL. The stable ABI does not cover free-threaded
+          # CPython, so 3.14t and 3.15t each get a wheel of their own. The first entry
+          # is the quick build.
+          matrix='[
+            {"os": "ubuntu-latest", "target": "x86_64", "libc": "manylinux"},
+            {"os": "ubuntu-24.04-arm", "target": "aarch64", "libc": "manylinux"},
+            {"os": "ubuntu-latest", "target": "x86_64", "libc": "musllinux"},
+            {"os": "ubuntu-24.04-arm", "target": "aarch64", "libc": "musllinux"},
+            {"os": "macos-latest", "target": "aarch64", "libc": "native"},
+            {"os": "macos-15-intel", "target": "x86_64", "libc": "native"},
+            {"os": "windows-latest", "target": "x64", "libc": "native"},
+            {"os": "windows-11-arm", "target": "aarch64", "libc": "native"}
+          ]'
+          if [ "$full" = true ]; then filter='.'; else filter='.[:1]'; fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(printf '%s' "$matrix" | jq -c "$filter")" >> "$GITHUB_OUTPUT"
+          echo "full matrix: $full"
+
   build:
     name: build (${{ matrix.os }}, ${{ matrix.target }}, ${{ matrix.libc }})
+    needs: plan
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # So that one push cannot hold every runner the account shares.
+      max-parallel: 4
       matrix:
-        # Each job builds three wheels. One uses the stable ABI and serves CPython 3.12
-        # and later with the GIL. The stable ABI does not cover free-threaded CPython,
-        # so 3.14t and 3.15t each get a wheel of their own.
-        include:
-          - { os: ubuntu-latest, target: x86_64, libc: manylinux }
-          - { os: ubuntu-24.04-arm, target: aarch64, libc: manylinux }
-          - { os: ubuntu-latest, target: x86_64, libc: musllinux }
-          - { os: ubuntu-24.04-arm, target: aarch64, libc: musllinux }
-          - { os: macos-latest, target: aarch64, libc: native }
-          - { os: macos-15-intel, target: x86_64, libc: native }
-          - { os: windows-latest, target: x64, libc: native }
-          - { os: windows-11-arm, target: aarch64, libc: native }
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -162,6 +230,8 @@ jobs:
 
   sdist:
     name: source distribution
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
