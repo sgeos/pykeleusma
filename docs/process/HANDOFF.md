@@ -25,36 +25,34 @@ completed, moved or abandoned.
 
 ## Next step
 
-Wait for the operator's decision on the roadmap changes proposed in `REVERSE_PROMPT.md`
-for Dromon, and for the `v0.2.3` reply to `pykeleusma-20261025-dynamic-host-findings`.
-Without either, task 2, `keleusma.compile` with located exceptions, is unaffected and
-can proceed.
+The operator approved the roadmap changes for Dromon on 2026-10-25, and they are in
+[`../roadmap/V0_1_0.md`](../roadmap/V0_1_0.md). Task 2, `keleusma.compile` with located
+exceptions, comes next. Task 3 then fixes the arena sizing defect, whose method waits on
+the `v0.2.3` reply.
 
 ## Open
 
-- **Defect in task 1, found 2026-10-25.** `OwnedVm` sizes the arena with
-  `auto_arena_capacity_for`, and Keleusma 0.2.2 then fails with `OutOfArena` on the
-  resume after the first `Reset`, and on a composite argument. Not yet fixed, at the
-  operator's instruction to change nothing in this prompt. Reported to `v0.2.3`.
+- **Defect in task 1.** The arena from `auto_arena_capacity_for` fails after the first
+  `Reset` and on a composite argument. Roadmap task 3 now owns the fix.
 - **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, covering arena
   margins, a yield type-check gap and how a dynamic host decodes flat composites.
-- **For task 4.** A flat composite carries no per-field types, so decoding needs the
-  declared type. This subsumes the earlier question about `Fixed` fraction bits.
-- **With the operator.** Roadmap changes for Dromon. The uv upgrade, which did not take
-  effect. The sccache arrangement and the sandbox write scopes.
+- **With the operator.** The uv copy on the `PATH`, the absolute `SCCACHE_DIR`, and the
+  sandbox write scopes, all described in the last report.
 
 ## Environment
 
 Checked on 2026-10-25 inside the sandbox.
 
 - **uv.** Version 0.9.5 panics inside the macOS sandbox while reading the system proxy
-  configuration. Version 0.13.5 works. The installed copy is still 0.9.5.
+  configuration. Version 0.13.5 works. The copy on the `PATH` is still 0.9.5, because
+  `python3` now installs into a different user directory.
 - **sccache.** The client cannot spawn its server inside the sandbox, but a server run
   in the foreground inside the sandbox, `SCCACHE_NO_DAEMON=1 SCCACHE_START_SERVER=1
   sccache`, serves sandboxed builds and caches them. A server started outside the
   sandbox would compile outside it, so it must not be used from a sandboxed session.
-- **Interline store.** Reading works in the sandbox. Writing does not until its
-  directory is allowed.
+  Agent sessions use their own port and cache through `SCCACHE_SERVER_PORT` and
+  `SCCACHE_DIR` in the user settings. sccache does not expand `~` in `SCCACHE_DIR`.
+- **Interline store.** Reading and writing work in the sandbox since 2026-10-25.
 - **Git.** `git fetch` and `git push` are excluded from the sandbox at user level. The
   exclusion matches only a bare command.
 
