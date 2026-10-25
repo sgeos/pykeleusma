@@ -153,6 +153,17 @@ impl ArenaPlan {
         argument_bytes: usize,
         native_wcmu: &[u32],
     ) -> Result<Self, OwnedVmError> {
+        // Keleusma's structural verifier runs first, as it does first in `Vm::new`. The
+        // footprint analyses below assume a well-formed control-flow graph, and a
+        // crafted module, found by fuzzing `keleusma.load_module`, sent
+        // `module_runtime_footprint` into unbounded recursion and overflowed the
+        // stack, while the verifier rejects the same module cleanly.
+        keleusma::verify::verify(module).map_err(|e| {
+            OwnedVmError::Vm(VmError::VerifyError(format!(
+                "{}: {}",
+                e.chunk_name, e.message
+            )))
+        })?;
         let footprint = auto_arena_capacity_for(module, native_wcmu).map_err(OwnedVmError::Vm)?;
         let heap = module_runtime_footprint(module, native_wcmu)
             .map_err(|e| {

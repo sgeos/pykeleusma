@@ -6,6 +6,7 @@
 //! class, in [`vm`], and task 4, value conversion by declared type, in [`convert`] and
 //! [`types`], and task 7, Python natives, in [`natives`].
 
+mod canaries;
 mod compat;
 mod compile;
 mod convert;

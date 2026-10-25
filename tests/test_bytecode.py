@@ -5,6 +5,10 @@ The bytes carry no source, so a loaded module converts values without declared t
 which admits scalars and text only.
 """
 
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 import keleusma
@@ -107,3 +111,30 @@ def test_bad_bytes_raise_load_error(data: bytes) -> None:
 def test_load_error_is_a_value_error() -> None:
     with pytest.raises(ValueError):
         keleusma.load_module(b"")
+
+
+DATA = Path(__file__).resolve().parent / "data"
+
+
+def test_a_module_the_verifier_rejects_is_refused_before_it_is_sized() -> None:
+    # Found by fuzzing `load_module`. Its control flow is malformed, which Keleusma's
+    # verifier rejects, but Keleusma's footprint analysis recursed without bound on
+    # it and overflowed the stack when the binding sized the arena first. It runs in
+    # a subprocess, so a regression fails this test rather than ending the run.
+    script = (
+        "import sys, keleusma\n"
+        "module = keleusma.load_module(open(sys.argv[1], 'rb').read())\n"
+        "try:\n"
+        "    keleusma.VM(module)\n"
+        "except keleusma.VerifyError as e:\n"
+        "    print('refused', e)\n"
+    )
+    result = subprocess.run(  # noqa: S603, the interpreter and script are fixed.
+        [sys.executable, "-c", script, str(DATA / "fuzz_unverified_footprint.bin")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("refused"), result.stdout
