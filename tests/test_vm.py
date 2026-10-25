@@ -11,7 +11,7 @@ because driving a stream from Python needs `call` and `resume`, which arrive wit
 # these tests are its only intended users.
 # pyright: reportPrivateUsage=false
 
-import resource
+import sys
 import threading
 
 import pytest
@@ -115,8 +115,37 @@ def test_dropping_a_vm_frees_it() -> None:
 
 
 def _peak_rss() -> int:
-    # The unit is bytes on macOS and kibibytes on Linux. Only ratios of two readings
-    # are compared, so the unit cancels.
+    # The unit is bytes on macOS and Windows and kibibytes on Linux. Only ratios of two
+    # readings are compared, so the unit cancels. Windows has no `resource` module, so
+    # its peak working set is read through the process status API.
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012, the layout ctypes requires.
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        process = ctypes.windll.kernel32.GetCurrentProcess()
+        ok = ctypes.windll.psapi.GetProcessMemoryInfo(
+            process, ctypes.byref(counters), counters.cb
+        )
+        assert ok, "GetProcessMemoryInfo failed"
+        return int(counters.PeakWorkingSetSize)
+    import resource
+
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 

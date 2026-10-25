@@ -159,10 +159,7 @@ fn invoke(
         .ok_or_else(|| crate::vm::VMError::new_err(format!("native `{name}` is not registered")))?;
     let read = ReadContext {
         arena: ctx.arena,
-        widths: Widths {
-            word_bytes: ctx.word_bytes,
-            float_bytes: ctx.float_bytes,
-        },
+        widths: Widths::of_native(ctx),
     };
     let signature = decl.and_then(|d| d.signature.as_ref());
     let converted = match signature {

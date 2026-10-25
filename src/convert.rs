@@ -31,7 +31,6 @@
 use keleusma::Arena;
 use keleusma::bytecode::{ArrayBody, EnumBody, StructBody, TupleBody, Value};
 use keleusma::flat_value::FlatComposite;
-use keleusma::marshall::{KeleusmaType, RefContext};
 use keleusma::value_layout::LayoutDescriptor;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
@@ -41,24 +40,7 @@ use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, P
 use crate::types::{OPTION_NONE, OPTION_SOME, OutOnly, Ty, Variant};
 use crate::vm::VMError;
 
-/// The module's scalar widths in bytes, which flat bodies are packed with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Widths {
-    pub word_bytes: usize,
-    pub float_bytes: usize,
-}
-
-impl Widths {
-    /// Widths from a module header, which stores each as the base-2 logarithm of a
-    /// bit count.
-    pub fn of(module: &keleusma::bytecode::Module) -> Self {
-        let bytes = |log2: u8| (1usize << log2) / 8;
-        Self {
-            word_bytes: bytes(module.word_bits_log2),
-            float_bytes: bytes(module.float_bits_log2),
-        }
-    }
-}
+pub use crate::compat::Widths;
 
 fn type_error(expected: &Ty, obj: &Bound<'_, PyAny>) -> PyErr {
     let got = obj
@@ -390,9 +372,10 @@ fn read_flat<'py>(
     let Widths {
         word_bytes,
         float_bytes,
+        ..
     } = ctx.widths;
     let layout = ty.layout();
-    let expected = layout.size_in_bytes(word_bytes, float_bytes);
+    let expected = ctx.widths.size_of(&layout);
     if bytes.len() != expected {
         return Err(mismatch(
             ty,
@@ -401,20 +384,8 @@ fn read_flat<'py>(
     }
     match ty {
         Ty::Text => {
-            let refs = RefContext {
-                arena: ctx.arena,
-                opaques: &[],
-                word_bytes,
-                float_bytes,
-                ref_epoch: epoch,
-            };
-            let text = <String as KeleusmaType<i64, f64>>::from_flat_bytes_ctx(
-                bytes,
-                word_bytes,
-                float_bytes,
-                &refs,
-            )
-            .map_err(|e| VMError::new_err(format!("{e:?}")))?;
+            let text = crate::compat::read_flat_text(bytes, ctx.widths, ctx.arena, epoch)
+                .map_err(|e| VMError::new_err(format!("{e:?}")))?;
             text.into_bound_py_any(py)
         }
         Ty::Tuple(types) => {
@@ -507,15 +478,11 @@ fn payload<'py>(
     ctx: &ReadContext<'_>,
     epoch: u64,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let Widths {
-        word_bytes,
-        float_bytes,
-    } = ctx.widths;
-    let mut offset = word_bytes;
+    let mut offset = ctx.widths.word_bytes;
     types
         .iter()
         .map(|field| {
-            let size = field.layout().size_in_bytes(word_bytes, float_bytes);
+            let size = ctx.widths.size_of(&field.layout());
             let slice = offset
                 .checked_add(size)
                 .and_then(|end| bytes.get(offset..end))
@@ -545,17 +512,14 @@ fn fields<'a, 'py>(
     ctx: &ReadContext<'_>,
     epoch: u64,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let Widths {
-        word_bytes,
-        float_bytes,
-    } = ctx.widths;
     types
         .enumerate()
         .map(|(index, field)| {
-            let offset = layout
-                .field_offset(index, word_bytes, float_bytes)
+            let offset = ctx
+                .widths
+                .offset_of(layout, index)
                 .ok_or_else(|| mismatch(field, "a field outside its composite"))?;
-            let size = field.layout().size_in_bytes(word_bytes, float_bytes);
+            let size = ctx.widths.size_of(&field.layout());
             let slice = offset
                 .checked_add(size)
                 .and_then(|end| bytes.get(offset..end))
