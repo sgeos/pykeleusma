@@ -17,8 +17,8 @@
 use std::collections::BTreeMap;
 
 use keleusma::ast::{
-    ConstBinOp, ConstExpr, ConstParam, FunctionCategory, ImportItem, PrimType, Program, TypeDef,
-    TypeExpr, TypeParam,
+    ConstBinOp, ConstExpr, ConstParam, DataVisibility, FunctionCategory, ImportItem, PrimType,
+    Program, TypeDef, TypeExpr, TypeParam,
 };
 use keleusma::value_layout::{LayoutDescriptor, ScalarKind};
 
@@ -573,6 +573,27 @@ pub struct NativeDecl {
     pub signature: Option<(Vec<Declared>, Declared)>,
     /// Whether the line is `use external ...`, which 0.1.0 does not support.
     pub external: bool,
+}
+
+/// The program's shared `data` block as a struct of its declared fields, which is
+/// how Keleusma lays the block out, packed in declaration order. `None` without a
+/// shared block. Keleusma 0.2.2 admits at most one. A field whose type does not
+/// resolve makes the whole block unsupported, carried as the error.
+pub fn shared_block(program: &Program, default_frac_bits: u8) -> Option<Declared> {
+    let resolver = Resolver::new(program, default_frac_bits);
+    let block = program
+        .data_decls
+        .iter()
+        .find(|d| d.visibility == DataVisibility::Shared)?;
+    let fields = block
+        .fields
+        .iter()
+        .map(|f| Ok((f.name.clone(), resolver.resolve(&f.type_expr)?)))
+        .collect::<Result<Vec<_>, Unsupported>>();
+    Some(fields.map(|fields| Ty::Struct {
+        name: block.name.clone(),
+        fields,
+    }))
 }
 
 /// The natives the program declares by name, keyed by the full name Keleusma uses,

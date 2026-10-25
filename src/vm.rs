@@ -48,7 +48,7 @@ use pyo3::exceptions::{
     PyKeyError, PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyMapping, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
 
 use crate::compile::{Boundary, Module, SignedImage};
@@ -90,6 +90,24 @@ fn construction_error(error: OwnedVmError) -> PyErr {
 /// to after.
 ///
 /// Checked here so that an unsuitable buffer is refused before the VM runs.
+/// A contiguous byte buffer of `size` bytes to read a shared block from, which,
+/// unlike one to write to, may be read-only.
+fn readable_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>> {
+    let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
+        PyTypeError::new_err("`buffer` must support the buffer protocol with byte items")
+    })?;
+    if !buffer.is_c_contiguous() {
+        return Err(PyValueError::new_err("`buffer` must be contiguous"));
+    }
+    if buffer.item_count() != size {
+        return Err(PyValueError::new_err(format!(
+            "`buffer` has {} bytes, but the module's shared `data` block has {size}",
+            buffer.item_count()
+        )));
+    }
+    Ok(buffer)
+}
+
 fn host_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>> {
     let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
         PyTypeError::new_err(
@@ -112,6 +130,93 @@ fn host_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>>
         )));
     }
     Ok(buffer)
+}
+
+/// The shared `data` block's declared type, checked against Keleusma's own layout
+/// table, or why the binding cannot convert the block by its fields.
+///
+/// The binding lays the block out from the declared field types, as a packed struct.
+/// Keleusma records each shared slot's offset when it compiles the module, so every
+/// offset is compared with the binding's, and any difference refuses typed access
+/// rather than reading a field at the wrong place.
+fn shared_type(module: &Module) -> Result<Ty, String> {
+    let declared = match &module.boundary().shared {
+        None => {
+            return Err(
+                "the module declares no shared `data` block, or was loaded from bytes, \
+                 which carry no declarations"
+                    .to_string(),
+            );
+        }
+        Some(Err(unsupported)) => {
+            return Err(format!("the shared block has {}", unsupported.0));
+        }
+        Some(Ok(ty)) => ty.clone(),
+    };
+    let widths = module.boundary().widths;
+    let layout = declared.layout();
+    let Some(data) = module.inner().data_layout.as_ref() else {
+        return Err("Keleusma records no data layout for the module".to_string());
+    };
+    let Ty::Struct {
+        name: block,
+        fields,
+    } = &declared
+    else {
+        return Err("the shared block is not a struct of fields".to_string());
+    };
+    // Keleusma names each shared slot `block.field`, and expands an array field into
+    // one slot per element, `block.field[i]`. Each recorded offset must equal the
+    // offset the binding computes for that name.
+    let shared_slots = data
+        .slots
+        .iter()
+        .filter(|slot| matches!(slot.visibility, keleusma::bytecode::SlotVisibility::Shared));
+    let mut checked = 0usize;
+    for (slot, recorded) in shared_slots.zip(&data.shared_layout) {
+        let expected = slot
+            .name
+            .strip_prefix(block.as_str())
+            .and_then(|rest| rest.strip_prefix('.'))
+            .and_then(|rest| shared_slot_offset(rest, fields, &layout, widths));
+        if expected != Some(usize::from(recorded.offset)) {
+            return Err(format!(
+                "the slot `{}` lies at offset {} in Keleusma's layout, not {expected:?}",
+                slot.name, recorded.offset
+            ));
+        }
+        checked += 1;
+    }
+    if checked != data.shared_layout.len() || checked == 0 {
+        return Err(format!(
+            "Keleusma records {} shared slot(s), of which {checked} were matched",
+            data.shared_layout.len()
+        ));
+    }
+    Ok(declared)
+}
+
+/// The binding's offset for the shared slot named `field` or `field[i]` within the
+/// block, or `None` for a name it cannot place.
+fn shared_slot_offset(
+    name: &str,
+    fields: &[(String, Ty)],
+    layout: &keleusma::value_layout::LayoutDescriptor,
+    widths: crate::convert::Widths,
+) -> Option<usize> {
+    let (field, element) = match name.split_once('[') {
+        Some((field, rest)) => (field, Some(rest.strip_suffix(']')?.parse::<usize>().ok()?)),
+        None => (name, None),
+    };
+    let index = fields.iter().position(|(n, _)| n == field)?;
+    let base = widths.offset_of(layout, index)?;
+    match (element, &fields[index].1) {
+        (None, _) => Some(base),
+        (Some(i), Ty::Array(element_ty, count)) if i < *count => {
+            base.checked_add(i.checked_mul(widths.size_of(&element_ty.layout()))?)
+        }
+        _ => None,
+    }
 }
 
 /// Refuse a module whose declaration of a library native differs from the library's.
@@ -229,6 +334,8 @@ pub struct VM {
     libraries: Vec<Library>,
     /// Whether the VM is suspended at a yield, where a hot swap is not allowed.
     suspended: bool,
+    /// The shared block's declared type, or why it cannot be converted by fields.
+    shared_type: Result<Ty, String>,
 }
 
 #[pymethods]
@@ -376,9 +483,11 @@ impl VM {
         vm.verify_resources().map_err(|e| vm_error(&e))?;
         // Zeroed, so a script reads defined bytes before the host writes any.
         let shared = vec![0u8; vm.shared_data_bytes()];
+        let shared_type = shared_type(&module);
         Ok(Self {
             vm,
             boundary,
+            shared_type,
             failed: false,
             has_stream,
             registry,
@@ -569,6 +678,7 @@ impl VM {
         if self.shared.len() != size {
             self.shared = vec![0u8; size];
         }
+        self.shared_type = shared_type(&module);
         self.boundary = boundary;
         self.failed = false;
         // The arena was checked against the new module above, so this confirms it with
@@ -761,6 +871,88 @@ impl VM {
         PyBytes::new(py, &self.shared)
     }
 
+    /// The shared `data` block's fields as a `dict`, converted by their declared
+    /// types, read from the VM's own block or from `buffer`, a block-sized buffer.
+    #[pyo3(signature = (buffer = None))]
+    fn read_shared<'py>(
+        &self,
+        py: Python<'py>,
+        buffer: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ty = self.typed_shared()?;
+        let bytes = match buffer {
+            Some(object) => {
+                let buffer = readable_buffer(object, self.shared.len())?;
+                buffer.to_vec(py)?
+            }
+            None => self.shared.clone(),
+        };
+        let none = |_: usize| None;
+        let ctx = ReadContext {
+            arena: self.vm.arena(),
+            widths: self.boundary.widths,
+            opaque: &none,
+        };
+        crate::convert::read_flat_value(py, &bytes, ty, &ctx)
+    }
+
+    /// Write the fields named in `values` into the shared `data` block, converting
+    /// each by its declared type, in the VM's own block or in `buffer`, a writable
+    /// block-sized buffer. Fields not named keep their bytes. Every value is
+    /// converted before any byte is written, so a refused value changes nothing.
+    #[pyo3(signature = (values, buffer = None))]
+    fn write_shared(
+        &mut self,
+        values: &Bound<'_, PyAny>,
+        buffer: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let py = values.py();
+        let ty = self.typed_shared()?.clone();
+        let Ty::Struct { name, fields } = &ty else {
+            return Err(VMError::new_err(
+                "the shared block is not a struct of fields",
+            ));
+        };
+        let values = values
+            .cast::<PyMapping>()
+            .map_err(|_| PyTypeError::new_err("`values` must be a mapping of field names"))?;
+        let host = buffer
+            .map(|object| host_buffer(object, self.shared.len()))
+            .transpose()?;
+        let mut bytes = match &host {
+            Some(buffer) => buffer.to_vec(py)?,
+            None => self.shared.clone(),
+        };
+        let widths = self.boundary.widths;
+        let layout = ty.layout();
+        for item in values.items()?.iter() {
+            let (key, value): (String, Bound<'_, PyAny>) = item.extract()?;
+            let index = fields.iter().position(|(n, _)| *n == key).ok_or_else(|| {
+                let known: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                PyKeyError::new_err(format!(
+                    "the shared block `{name}` has no field `{key}`; its fields are {}",
+                    known.join(", ")
+                ))
+            })?;
+            let field_ty = &fields[index].1;
+            let offset = widths
+                .offset_of(&layout, index)
+                .ok_or_else(|| VMError::new_err("a shared field outside its block"))?;
+            let end = offset + widths.size_of(&field_ty.layout());
+            let slot = bytes
+                .get_mut(offset..end)
+                .ok_or_else(|| VMError::new_err("a shared field past the end of its block"))?;
+            crate::convert::write_flat(slot, &value, field_ty, widths)?;
+        }
+        match host {
+            Some(buffer) => buffer.copy_from_slice(py, &bytes),
+            None => {
+                self.shared = bytes;
+                Ok(())
+            }
+        }
+    }
+
     /// Drive the VM through Python's generator protocol, yielding each `Yielded` and
     /// `Reset` and returning the `Finished` value. Resume inputs come from `inputs`
     /// or from `send`. The semantics, including the meaning of `Reset`, are
@@ -826,6 +1018,13 @@ impl VM {
         let buffer = host_buffer(object, self.shared.len())?;
         buffer.copy_to_slice(object.py(), &mut self.shared)?;
         Ok(Some(buffer))
+    }
+
+    /// The shared block's declared type, or the reason it cannot be converted.
+    fn typed_shared(&self) -> PyResult<&Ty> {
+        self.shared_type
+            .as_ref()
+            .map_err(|why| PyTypeError::new_err(format!("no typed shared access: {why}")))
     }
 
     /// Copy the VM's shared block back to the Python buffer it was synced from.
