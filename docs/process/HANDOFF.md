@@ -25,24 +25,38 @@ completed, moved or abandoned.
 
 ## Next step
 
-Task 2 of [`../roadmap/V0_1_0.md`](../roadmap/V0_1_0.md), `keleusma.compile` with
-exception classes that carry the line and column. Task 3 then replaces `_OwnedVmProbe`
-with `keleusma.VM` and removes the probe.
+Wait for the operator's decision on the roadmap changes proposed in `REVERSE_PROMPT.md`
+for Dromon, and for the `v0.2.3` reply to `pykeleusma-20261025-dynamic-host-findings`.
+Without either, task 2, `keleusma.compile` with located exceptions, is unaffected and
+can proceed.
 
 ## Open
 
-- **With `v0.2.3`.** Notice `pykeleusma-20261024-miri-stacked-borrows`, an rkyv report
-  under Miri's Stacked Borrows model. No reply is expected.
-- **For task 4.** Whether a 0.2.2 module keeps enough type information to find the
-  fraction bits of a `Fixed` result.
-- **With the operator.** Sandbox allowances for development, proposed in the last report
-  and not yet applied.
+- **Defect in task 1, found 2026-10-25.** `OwnedVm` sizes the arena with
+  `auto_arena_capacity_for`, and Keleusma 0.2.2 then fails with `OutOfArena` on the
+  resume after the first `Reset`, and on a composite argument. Not yet fixed, at the
+  operator's instruction to change nothing in this prompt. Reported to `v0.2.3`.
+- **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, covering arena
+  margins, a yield type-check gap and how a dynamic host decodes flat composites.
+- **For task 4.** A flat composite carries no per-field types, so decoding needs the
+  declared type. This subsumes the earlier question about `Fixed` fraction bits.
+- **With the operator.** Roadmap changes for Dromon. The uv upgrade, which did not take
+  effect. The sccache arrangement and the sandbox write scopes.
 
 ## Environment
 
-In a sandboxed agent session, `uv` and `cargo` write outside the repository, to their
-caches and registry, the interline store lies outside it, and `git push` over SSH needs
-`~/.ssh`. Those commands ran outside the sandbox on 2026-10-24.
+Checked on 2026-10-25 inside the sandbox.
+
+- **uv.** Version 0.9.5 panics inside the macOS sandbox while reading the system proxy
+  configuration. Version 0.13.5 works. The installed copy is still 0.9.5.
+- **sccache.** The client cannot spawn its server inside the sandbox, but a server run
+  in the foreground inside the sandbox, `SCCACHE_NO_DAEMON=1 SCCACHE_START_SERVER=1
+  sccache`, serves sandboxed builds and caches them. A server started outside the
+  sandbox would compile outside it, so it must not be used from a sandboxed session.
+- **Interline store.** Reading works in the sandbox. Writing does not until its
+  directory is allowed.
+- **Git.** `git fetch` and `git push` are excluded from the sandbox at user level. The
+  exclusion matches only a bare command.
 
 ## Validity
 
