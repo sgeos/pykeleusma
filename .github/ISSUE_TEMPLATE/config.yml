@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/sgeos/pykeleusma/security/advisories/new
+    about: A crash of the Python process or a verification bypass, as SECURITY.md describes.
+  - name: Keleusma language and runtime
+    url: https://github.com/sgeos/keleusma/issues
+    about: Defects and requests that belong to Keleusma itself rather than to this binding.

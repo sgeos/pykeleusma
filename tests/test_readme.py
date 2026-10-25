@@ -61,3 +61,20 @@ def test_the_readme_signing_example_runs() -> None:
     )
     assert block is not None
     exec(compile(block.group(1), "README.md", "exec"), {})  # noqa: S102 - as above
+
+
+def test_the_badges_state_the_pinned_versions() -> None:
+    # The Keleusma and Python badges are static images, so they would go stale
+    # silently. Both sides are derived, from the linked runtime and from the package
+    # metadata.
+    import tomllib
+
+    import keleusma
+
+    root = Path(__file__).resolve().parent.parent
+    metadata = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))
+    floor = metadata["project"]["requires-python"].removeprefix(">=")
+    head = README.split("\n## ", 1)[0]
+    assert f"badge/keleusma-{keleusma.KELEUSMA_VERSION}-" in head
+    assert f"crates.io/crates/keleusma/{keleusma.KELEUSMA_VERSION})" in head
+    assert f"badge/python-{floor}%2B-" in head
