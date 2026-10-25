@@ -14,7 +14,7 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 **Early development.** The repository was cut on 2026-10-24. The extension builds, links
 the published Keleusma 0.2.2 from crates.io, and exposes version information. The
 internal ownership of a VM and its memory arena is in place and tested, but no public
-interface can run a script yet. Compilation works.
+interface can run a script yet. Compilation and verified construction work.
 
 ```python
 import keleusma
@@ -25,7 +25,12 @@ try:
     keleusma.compile("fn main() -> Word { $ }")
 except keleusma.SourceError as error:  # LexError, ParseError or CompileError
     print(error.msg, error.lineno, error.colno)  # unexpected character '$' 1 21
-``` The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
+
+vm = keleusma.VM(module)  # raises keleusma.VerifyError if the verifier rejects it
+```
+
+A VM reserves `argument_bytes`, 4096 by default, of its arena for composite arguments
+such as tuples carrying text. A host that passes larger values gives a larger figure. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
 and the planned interface in
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
 
@@ -38,12 +43,11 @@ keleusma.BYTECODE_VERSION  # 1, read from the linked runtime
 
 ## Planned interface
 
-Not implemented beyond `compile`. This is the target for version 0.1.0.
+Not implemented beyond `compile` and `VM`. This is the target for version 0.1.0.
 
 ```python
 import keleusma
 
-vm = keleusma.VM(module)  # verifies bounds and sizes the arena
 vm.register("draw", lambda x, y: ...)  # a Python callable as a host native
 
 for frame in vm.stream():  # one resume per yield of the script's loop

@@ -136,3 +136,17 @@ def test_modules_compile_concurrently_and_cross_threads() -> None:
     assert errors == []
     assert len(results) == 8
     assert all("1 chunk" in repr(module) for module in results)
+
+
+def test_a_compile_error_without_a_location_reports_none() -> None:
+    # Found on 2026-10-25. Keleusma 0.2.2 rejects this array-of-tuples return in a
+    # structural verification pass whose error carries the default span, line 0.
+    source = (
+        "loop main(e: Word) -> [(Text, Word); 2] { "
+        'let n = yield [("wake", e), ("end_turn", 0)]; [("x", n), ("y", n)] }'
+    )
+    with pytest.raises(keleusma.CompileError) as caught:
+        keleusma.compile(source)
+    assert caught.value.lineno is None
+    assert caught.value.colno is None
+    assert str(caught.value) == caught.value.msg

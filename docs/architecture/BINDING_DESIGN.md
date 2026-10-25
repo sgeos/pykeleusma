@@ -23,13 +23,13 @@ serves every later Python. maturin builds it.
 | Python | Keleusma 0.2.2 |
 |---|---|
 | `keleusma.compile(source)` | `lexer::tokenize`, then `parser::parse`, then `compiler::compile`, the pipeline `examples/piano_roll.rs` uses |
-| `keleusma.VM(module)` | `Arena::with_capacity` sized by `vm::auto_arena_capacity_for`, then `Vm::new(module, &arena)`, which verifies the module |
+| `keleusma.VM(module)` | `Arena::try_with_capacity` sized as described under Arena sizing, then `Vm::new(module, &arena)`, which verifies the module |
 | `vm.register(name, callable)` | `Vm::register_native_closure(name, func)`, where `func` is `Fn(&[Value]) -> Result<Value, VmError> + 'static` |
 | `vm.call(*args)` | `Vm::call(&[Value])`, returning a `VmState` |
 | `vm.resume(value)` | `Vm::resume(Value)` |
 | `vm.stream(*args)` | A Python generator over `call` and then `resume` while the state is `Yielded` |
 | Result kinds | `VmState::Yielded`, `Finished`, `Reset`, and a breakpoint state the binding does not expose in 0.1.0 |
-| Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, which has a `category()` |
+| Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, raised as `VerifyError` or `VMError` as described under Arena sizing |
 
 `Vm` is `GenericVm<'a, 'arena, i64, u64, f64>` and `Value` is `GenericValue<i64, f64>`.
 The `'a` lifetime belongs to the bytecode store and borrows input bytes only for
@@ -79,25 +79,59 @@ region to drop private data slots, so the arena must outlive the VM, which `self
 guarantees by dropping the dependent first.
 
 **Evidence.** The Rust tests in `src/owned_vm.rs` pass natively and under Miri with Tree
-Borrows, including Miri's leak check. `tests/test_owned_vm.py` creates and drops 20,000
-VMs through the temporary `_OwnedVmProbe` class and compares peak resident memory with a
-control that keeps as many alive. A deliberate mutation that leaked one VM per
+Borrows, including Miri's leak check. `tests/test_vm.py` creates and drops 20,000 VMs,
+through `keleusma.VM` since task 3 and a temporary probe class before it, and compares
+peak resident memory with a control that keeps as many alive. A deliberate mutation that leaked one VM per
 construction made that test fail, so the test can detect the leak it guards against.
 
-**Defect found on 2026-10-25.** The capacity below is too small. In Keleusma 0.2.2 the
-resume after the first `Reset` fails with `OutOfArena` in an arena of exactly the auto
-size, and so does a call with a composite argument. Peak use was 504 bytes against an
-auto size of 184 for a minimal stream. The failure is a clean error. Roadmap task 3 fixes
-the sizing, and the method waits on the `v0.2.3` reply to
-`pykeleusma-20261025-dynamic-host-findings`.
+## Arena sizing, roadmap task 3
 
-**Arena sizing as implemented.** The capacity is `vm::auto_arena_capacity_for(module, &[])` plus
-`vm::required_persistent_capacity_for(module)`, and the persistent region is reserved
-before the VM is built. Keleusma 0.2.2 does not state whether the footprint already
-includes the persistent region, so the two are added, at a cost of at most one
-persistent region of spare capacity. The arena is allocated with
-`Arena::try_with_capacity`, so an allocation failure raises `MemoryError` instead of
-aborting the process.
+**Implemented on 2026-10-25.** `keleusma.VM(module, *, argument_bytes=4096)` builds the
+arena from four parts, computed in `ArenaPlan::for_module` in `src/owned_vm.rs`.
+
+| Part | Source | Status |
+|---|---|---|
+| Footprint | `vm::auto_arena_capacity_for(module, &[])` | Keleusma's verified figure |
+| Persistent region | `vm::required_persistent_capacity_for(module)`, reserved before the VM is built | Added, because Keleusma does not say whether the footprint includes it |
+| Regrowth | Twice the working set, which is the footprint less `module.aux_arena_bytes` and the footprint's heap bytes | Empirical, not proven |
+| Argument budget | `argument_bytes`, chosen by the host | Host responsibility |
+
+**Fact, the defect.** In Keleusma 0.2.2 a stream in an arena of exactly the footprint
+fails with `OutOfArena` on the resume after its first `Reset`, and a composite argument
+also needs space the footprint leaves out. The failure is a clean error. A Rust test
+pins the first behaviour, so a fix in Keleusma will show up as a failing test rather
+than as a silently oversized arena. Both were reported to `v0.2.3`, whose interim reply
+called a host margin a workaround, not a supported bound.
+
+**Measurements, on 2026-10-25, macOS aarch64.** A value slot is 32 bytes and a call
+frame 24, which reproduces the footprint exactly, for example 5 slots and 1 frame give
+184 bytes. The smallest arena that survived 2,000 iterations was, in every script with
+word arguments, the footprint plus one doubling of the operand stack. For the minimal
+stream that is 184 + 320 = 504 bytes. The regrowth part covers this with at least 48
+bytes to spare in every script measured, which included nested calls, deep
+expressions, private data and four yields per iteration.
+
+**Inference.** The restart after a `Reset` needs more operand slots than the verifier's
+footprint reserves, and the operand stack then grows inside a bump allocator, where the
+abandoned smaller buffer is not reclaimed until a full reset. One doubling is what was
+observed. A script that regrew twice would need more, and none was found.
+
+**Arguments.** A tuple argument costs about twice its text length plus a few tens of
+bytes, and accumulates across the yields of one stream iteration, at 2L + 22 bytes for
+one yield and 3L + 57 for two yields with text of length L. That depends on the host's
+data, so no figure derived from the module can cover it. `argument_bytes` is the host's
+statement of how much to reserve, 4096 bytes by default. An argument that does not fit
+fails with `OutOfArena`, which the binding raises as `keleusma.VMError`.
+
+**Evidence.** Rust tests drive seven word streams and one tuple stream for 10,000
+iterations in an automatically sized arena. A mutation that removed the regrowth part
+made the word-stream tests fail. The arena is allocated with `Arena::try_with_capacity`,
+so an allocation failure raises `MemoryError` instead of aborting the process.
+
+**Construction errors.** `VerifyError(KeleusmaError, ValueError)` carries the verifier's
+message, which names the chunk and the failure. Every other Keleusma error during
+construction or a run raises `VMError(KeleusmaError, RuntimeError)`. A capacity that
+overflows raises `OverflowError`.
 
 ## Risk 2, Python natives are not bounded
 
@@ -212,7 +246,7 @@ from another thread reaches Python as `pyo3_runtime.PanicException`, which deriv
 and it originates in PyO3. The alternative, an `unsafe impl Send` with a manual thread
 check, was rejected as unsound, because Python can drop the object on any thread, and
 PyO3's `unsendable` handles that case where a manual check would not. The behaviour is
-pinned by `tests/test_owned_vm.py`.
+pinned by `tests/test_vm.py`.
 
 **Confirmed on 2026-10-24 by the operator.** Keleusma contexts are not thread safe, and
 thread-safe programs give each context a dedicated thread. The binding matches that
