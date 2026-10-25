@@ -395,7 +395,63 @@ fn unknown_native(name: &str, names: &[String]) -> PyErr {
 
 /// The callable and declared bounds of a `natives=` value, which is either a callable
 /// or a `keleusma.Native`.
-fn native_parts(value: &Bound<'_, PyAny>) -> PyResult<(Py<PyAny>, Option<u32>, Option<u32>)> {
+/// The `use external` natives among `names`, each with its attested calls per
+/// iteration, checked against what the host passed.
+///
+/// An external native needs a callable and `max_invocations`, because Keleusma
+/// records the attestation in place of a per-call bound. `max_invocations` for any
+/// other native is refused, because Keleusma would ignore it.
+fn external_natives(
+    boundary: &Boundary,
+    names: &[String],
+    slots: &BTreeMap<String, Slot>,
+) -> PyResult<Vec<(String, u32)>> {
+    let mut external = Vec::new();
+    for name in names {
+        let is_external = boundary.natives.get(name).is_some_and(|d| d.external);
+        let slot = slots.get(name);
+        let attested = slot.and_then(|s| s.max_invocations);
+        match (is_external, attested) {
+            (true, Some(n)) if slot.is_some_and(|s| s.callable.is_some()) => {
+                external.push((name.clone(), n));
+            }
+            (true, _) => {
+                return Err(external_needs_attestation(name));
+            }
+            (false, Some(_)) => {
+                return Err(PyTypeError::new_err(format!(
+                    "`max_invocations` applies only to a `use external` native, and \
+                     `{name}` is not one"
+                )));
+            }
+            (false, None) => {}
+        }
+    }
+    if external.len() > crate::external::MAX_EXTERNAL {
+        return Err(VerifyError::new_err(format!(
+            "the module declares {} `use external` natives, more than the {} the binding \
+             can serve",
+            external.len(),
+            crate::external::MAX_EXTERNAL
+        )));
+    }
+    Ok(external)
+}
+
+/// The error for a `use external` native passed without what it needs.
+fn external_needs_attestation(name: &str) -> PyErr {
+    PyTypeError::new_err(format!(
+        "the native `{name}` is declared `use external`, so pass it as \
+         keleusma.Native(function, max_invocations=n), where n bounds its calls per \
+         stream iteration"
+    ))
+}
+
+/// A native's callable and the bounds declared with it: time, memory, and for a
+/// `use external` native the calls per iteration.
+type NativeParts = (Py<PyAny>, Option<u32>, Option<u32>, Option<u32>);
+
+fn native_parts(value: &Bound<'_, PyAny>) -> PyResult<NativeParts> {
     let native_class = value.py().import("keleusma._native")?.getattr("Native")?;
     if value.is_instance(&native_class)? {
         let function = value.getattr("function")?;
@@ -404,10 +460,11 @@ fn native_parts(value: &Bound<'_, PyAny>) -> PyResult<(Py<PyAny>, Option<u32>, O
         }
         let wcet: Option<u32> = value.getattr("wcet")?.extract()?;
         let wcmu_bytes: Option<u32> = value.getattr("wcmu_bytes")?.extract()?;
-        return Ok((function.unbind(), wcet, wcmu_bytes));
+        let max_invocations: Option<u32> = value.getattr("max_invocations")?.extract()?;
+        return Ok((function.unbind(), wcet, wcmu_bytes, max_invocations));
     }
     if value.is_callable() {
-        return Ok((value.clone().unbind(), None, None));
+        return Ok((value.clone().unbind(), None, None, None));
     }
     Err(PyTypeError::new_err(
         "a native must be a callable or a keleusma.Native",
@@ -446,11 +503,16 @@ pub struct VM {
     libraries: Vec<Library>,
     /// Whether the VM is suspended at a yield, where a hot swap is not allowed.
     suspended: bool,
+    /// Whether the last state was `Reset`, after which a resume starts the next
+    /// iteration of the stream.
+    at_reset: bool,
     /// The shared block's declared type, or why it cannot be converted by fields.
     shared_type: Result<Ty, String>,
     /// The running module, which a cost-model analysis reads, since Keleusma keeps
     /// its own copy private.
     module: keleusma::bytecode::Module,
+    /// Each `use external` native's index in the trampoline table.
+    external_index: BTreeMap<String, usize>,
 }
 
 #[pymethods]
@@ -480,15 +542,6 @@ impl VM {
         let names = module.inner().native_names.clone();
         module.check_signature_route()?;
         let boundary = module.boundary().clone();
-        if let Some(external) = names
-            .iter()
-            .find(|name| boundary.natives.get(*name).is_some_and(|d| d.external))
-        {
-            return Err(VerifyError::new_err(format!(
-                "the native `{external}` is declared `use external`, which pykeleusma 0.1.0 \
-                 does not support"
-            )));
-        }
         // Every native the module names gets a slot, with Keleusma's default bounds
         // unless the host declares its own, so the arena is sized for all of them.
         let mut slots: BTreeMap<String, Slot> = names
@@ -499,6 +552,7 @@ impl VM {
                     wcet: DEFAULT_NATIVE_WCET,
                     wcmu_bytes: DEFAULT_NATIVE_WCMU_BYTES,
                     library: false,
+                    max_invocations: None,
                 };
                 (name.clone(), slot)
             })
@@ -510,12 +564,14 @@ impl VM {
                 let slot = slots
                     .get_mut(&name)
                     .ok_or_else(|| unknown_native(&name, &names))?;
-                let (callable, wcet, wcmu_bytes) = native_parts(&value)?;
+                let (callable, wcet, wcmu_bytes, max_invocations) = native_parts(&value)?;
                 slot.callable = Some(callable);
                 slot.wcet = wcet.unwrap_or(DEFAULT_NATIVE_WCET);
                 slot.wcmu_bytes = wcmu_bytes.unwrap_or(DEFAULT_NATIVE_WCMU_BYTES);
+                slot.max_invocations = max_invocations;
             }
         }
+        let external_names = external_natives(&boundary, &names, &slots)?;
         check_library_declarations(&libraries, &boundary, &names, |n| {
             slots.get(n).is_some_and(|s| s.callable.is_some())
         })?;
@@ -559,10 +615,23 @@ impl VM {
         .map_err(construction_error)?;
         let registry: Registry = Rc::new(RefCell::new(slots));
         let native_error: ErrorSlot = Rc::new(RefCell::new(None));
+        // A `use external` native is served through a trampoline, with the host's
+        // attested call count, and every other native as a verified closure.
+        let table = vm.external_table();
+        table.borrow_mut().widths = Some(boundary.widths);
+        let mut external_index = BTreeMap::new();
         for (name, _, _) in &bounds {
             let decl = boundary.natives.get(name).cloned();
             let func = closure(name.clone(), decl, registry.clone(), native_error.clone());
-            vm.register_native(name, func);
+            match external_names.iter().find(|(n, _)| n == name) {
+                Some((_, max_invocations)) => {
+                    let index = table.borrow().closures.len();
+                    table.borrow_mut().closures.push(Rc::new(func));
+                    vm.register_external_native(name, index, *max_invocations);
+                    external_index.insert(name.clone(), index);
+                }
+                None => vm.register_native(name, func),
+            }
         }
         // A library replaces the binding's closure for each native it provides, except
         // where the host passed its own callable for that name, which is restored.
@@ -602,6 +671,7 @@ impl VM {
         let analysed = module.inner().clone();
         Ok(Self {
             module: analysed,
+            external_index,
             vm,
             boundary,
             shared_type,
@@ -612,6 +682,7 @@ impl VM {
             shared,
             libraries,
             suspended: false,
+            at_reset: false,
         })
     }
 
@@ -701,16 +772,23 @@ impl VM {
                     .is_some_and(|s| s.callable.is_some())
             },
         )?;
-        if let Some(external) = module
-            .inner()
-            .native_names
-            .iter()
-            .find(|name| boundary.natives.get(*name).is_some_and(|d| d.external))
-        {
-            return Err(VerifyError::new_err(format!(
-                "the native `{external}` is declared `use external`, which pykeleusma 0.1.0 \
-                 does not support"
-            )));
+        // Keleusma keeps a native's classification across a swap, so a native must be
+        // external in the new module exactly when it was registered as external.
+        for name in &module.inner().native_names {
+            let external = boundary.natives.get(name).is_some_and(|d| d.external);
+            if external != self.external_index.contains_key(name) {
+                return Err(VerifyError::new_err(format!(
+                    "the native `{name}` is {} in the new module but was {} in this VM, \
+                     and Keleusma keeps a native's classification across a swap; build a \
+                     new VM from the module instead",
+                    if external {
+                        "`use external`"
+                    } else {
+                        "not external"
+                    },
+                    if external { "not external" } else { "external" },
+                )));
+            }
         }
         let native_wcmu: Vec<u32> = {
             let registry = self.registry.borrow();
@@ -779,6 +857,7 @@ impl VM {
                             wcet: DEFAULT_NATIVE_WCET,
                             wcmu_bytes: DEFAULT_NATIVE_WCMU_BYTES,
                             library,
+                            max_invocations: None,
                         },
                     );
                     library
@@ -792,7 +871,16 @@ impl VM {
                     self.registry.clone(),
                     self.native_error.clone(),
                 );
-                self.vm.register_native(name, func);
+                // An external native keeps its trampoline, whose closure is replaced.
+                match self.external_index.get(name) {
+                    Some(&index) => {
+                        let table = self.vm.external_table();
+                        let mut table = table.borrow_mut();
+                        table.closures[index] = Rc::new(func);
+                        table.widths = Some(boundary.widths);
+                    }
+                    None => self.vm.register_native(name, func),
+                }
             }
         }
         self.has_stream = module
@@ -806,6 +894,8 @@ impl VM {
         }
         self.shared_type = shared_type(&module);
         self.module = module.inner().clone();
+        // The new module is driven from `call`, not from the old module's `Reset`.
+        self.at_reset = false;
         self.boundary = boundary;
         self.failed = false;
         // The arena was checked against the new module above, so this confirms it with
@@ -834,6 +924,7 @@ impl VM {
         self.native_error.borrow_mut().take();
         self.failed = false;
         self.suspended = false;
+        self.at_reset = false;
     }
 
     /// Declare the worst-case time, in nominal cycles, and arena memory,
@@ -938,7 +1029,7 @@ impl VM {
                         per_call_wcmu_bytes: slot
                             .map_or(DEFAULT_NATIVE_WCMU_BYTES, |s| s.wcmu_bytes),
                         per_call_wcet_cycles: slot.map_or(DEFAULT_NATIVE_WCET, |s| s.wcet),
-                        max_invocations: None,
+                        max_invocations: slot.and_then(|s| s.max_invocations),
                     }
                 })
                 .collect()
@@ -970,6 +1061,17 @@ impl VM {
             )));
         }
         stream_wcet(op_cycles, text_byte_cycles).map(Some)
+    }
+
+    /// An upper bound on the most arena memory this VM has used at once, in bytes.
+    ///
+    /// The arena includes a margin for a shortfall in Keleusma 0.2.2's own sizing,
+    /// which was measured rather than proven. Comparing this figure with
+    /// `arena_capacity` after running a host's own scripts shows how much of that
+    /// margin they use. Running out raises `keleusma.VMError` and never crashes.
+    #[getter]
+    fn arena_peak_bytes(&self) -> usize {
+        self.vm.arena_peak_bytes()
     }
 
     /// The bytes of the arena reserved for composite arguments.
@@ -1032,6 +1134,37 @@ impl VM {
         let state = self.state(py, outcome)?;
         self.flush_shared(py, host)?;
         Ok(state)
+    }
+
+    /// Advance a stream to its next yield with `value`, in one call.
+    ///
+    /// A Keleusma 0.2.2 iteration of a `loop main` is a yield and then a `Reset`, so
+    /// driving one iteration per frame takes two resumes, one completing the previous
+    /// iteration and one starting the next. `step` does both with the same `value`,
+    /// and starts the stream with `call(value)` when nothing is running. It returns the
+    /// state the last resume or call returned, which is `Yielded` for the next yield,
+    /// or `Finished`. A stream that yields more than once per iteration returns at its
+    /// next yield without a `Reset` in between.
+    ///
+    /// `shared` follows the same rule as in `call`, and is lent to each resume.
+    #[pyo3(signature = (value, *, shared = None))]
+    fn step<'py>(
+        &mut self,
+        py: Python<'py>,
+        value: &Bound<'py, PyAny>,
+        shared: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if self.suspended {
+            let state = self.resume(py, value, shared)?;
+            if !self.at_reset {
+                return Ok(state);
+            }
+        }
+        if self.at_reset {
+            return self.resume(py, value, shared);
+        }
+        let args = PyTuple::new(py, [value])?;
+        self.call(py, &args, shared)
     }
 
     /// Resume after a yield or a reset with `value`, converted by the type of the
@@ -1283,6 +1416,7 @@ impl VM {
         // native-error construct, belongs to no failure and is dropped.
         let raised = self.native_error.borrow_mut().take();
         self.suspended = matches!(outcome, Ok(VmState::Yielded(_)));
+        self.at_reset = matches!(outcome, Ok(VmState::Reset));
         let state = match outcome {
             Ok(state) => state,
             Err(VmError::NotSuspended) => return Err(vm_error(&VmError::NotSuspended)),

@@ -189,11 +189,18 @@ in `keleusma._native`, the README and this document, and implies nothing stronge
 - **Re-entry** into the same VM from a native is refused by PyO3's borrow checking with
   an exception. The registry is borrowed only to clone the callable, so no borrow is
   held while Python runs.
-- **Not supported.** `use external` natives are refused at construction. Keleusma
-  serves one only through `register_external_native`, which takes a plain function
-  pointer with no context, so a Python callable cannot be attached, and a text or
-  composite argument could not be read without the arena. Keleusma was asked for a
-  closure-based form.
+- **External natives.** A native imported with `use external` is attested by its
+  calls per stream iteration, given as `keleusma.Native(f, max_invocations=n)`, which
+  is required for it and refused for any other native. Keleusma serves one only through
+  `register_external_native`, which takes a plain function pointer with no context.
+  `src/external.rs` bridges that with a pool of sixteen trampolines. Each run pushes its
+  VM's closures and arena onto a thread-local stack, and a trampoline calls the top
+  frame's closure with a native context built from that arena, so values convert as
+  for any other native. Nested VMs push and pop their own frames. Keleusma 0.2.2 does
+  not fold an external native's memory into its worst-case memory bound, so a large
+  result from one can exhaust the arena, which raises `VMError`. A native's
+  classification persists across a swap, so a swap that reclassifies a native is
+  refused. Keleusma was asked for a closure-based form, which would retire the pool.
 
 **Evidence.** 24 tests cover calls, typed and untyped conversion, exception identity,
 re-entry, registration, bounds and the collected cycle. Three mutations each made tests
@@ -318,8 +325,9 @@ tests fail.
 verifier rejects an inner `loop` without a static iteration bound, so an iteration is
 one yield and one `Reset`. A host that wants one result per frame or tick therefore
 advances one iteration each time. The resume that completes the previous iteration
-returns `Reset`, and the next resume starts the new one. Each example has a short helper
-that does this.
+returns `Reset`, and the next resume starts the new one. `vm.step(value)`, added on
+2026-10-25, does both in one call and starts the stream when nothing is running, so the
+PyGame example now makes one call per frame.
 
 **Fact, accumulation.** Script bindings are immutable, and private data starts as `()`.
 The NumPy example passes its running sums in with each chunk and accumulates the chunk
@@ -353,6 +361,11 @@ update loop, the figures it budgets with.
   result if it differs from Keleusma's own, which would mean the native bounds were
   assembled differently. An earlier revision said Keleusma has no cost model API,
   which was wrong.
+- **Measured use.** `vm.arena_peak_bytes` bounds the most arena memory a VM has used
+  at once, the persistent region plus each working end's peak. It lets a host see how
+  much of the empirical margin its own scripts use. The crate's example scripts peak at
+  most at 23 percent of their arena, mostly because of the argument budget. Exhaustion
+  raises `VMError` and never crashes, which the tests cover.
 - **No stream, no figure.** Keleusma returns zero for a module without a stream chunk, so
   a `fn main` or a `yield main` would read as free. The binding returns `None` for
   those instead.
@@ -436,11 +449,17 @@ into tuple and array literals whose type as a whole was not recorded. A mismatch
 `keleusma.CompileError` at the yielded value. If the re-check itself fails, compilation
 fails closed.
 
-**Residual risk.** An expression with no recorded type is not compared. Keleusma's typed
-operand-stack pass rejects the composites built from values of unresolved type that
-were tried, and a top-level scalar keeps its tag, so a mismatch there raises `VMError`.
-No crash was found past the guard, but that is not proof. Only a fix in Keleusma's type
-checker closes it.
+**Values with no recorded type.** Until 2026-10-25 an expression with no recorded type
+was not compared, a residual risk. The guard now refuses one wherever the declared type
+holds `Text` inside a composite, the only shape whose flat bytes hold a pointer. It
+admits one case, a name bound by `let name = yield ...` in `main` when the resume type
+equals the declared yield type, because the binding converted that value by exactly that
+type. Elsewhere a mistyped value is caught or misread without a pointer when decoded.
+Run over the test suite, the crate's scripts and the book's programs, the stricter guard
+refused none that Keleusma runs correctly, and it refused a genuinely mistyped program
+that Keleusma accepts, a resumed `Word` yielded as `(Text, Word)`. **What remains.** The
+guard trusts the types Keleusma records. A wrong recorded type would be a Keleusma
+type-checker defect, which PR 517 addresses for yields.
 
 ### Fixed-point values
 
@@ -612,7 +631,7 @@ Keleusma 0.2.2 does not lay it out as its substituted fields. A probe found an `
 field in `Box<Word>` and a short body for `Pair<Word, Text>`, and a generic enum
 failed to type-check after monomorphization.
 
-**Not supported.** `use external` natives, type-generic structs and enums, nested
+**Not supported.** Type-generic structs and enums, nested
 options, refined newtypes and const-generic enums as inputs, composite private fields
 when seeding a swap, and reading the old module's private values.
 

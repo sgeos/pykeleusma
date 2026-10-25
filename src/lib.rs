@@ -11,6 +11,7 @@ mod compat;
 mod compile;
 mod convert;
 mod crypto;
+mod external;
 mod libraries;
 mod natives;
 mod opaque;

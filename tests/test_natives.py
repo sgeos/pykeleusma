@@ -167,12 +167,15 @@ def test_a_native_must_be_callable() -> None:
         vm.register("host::double", 3)  # pyright: ignore[reportArgumentType]
 
 
-def test_an_external_native_is_refused() -> None:
+def test_a_bare_external_native_converts_untyped() -> None:
+    # `use external` natives are covered in test_external.py. A bare one, without a
+    # signature, converts scalars by their own tags, as any bare native does.
     module = keleusma.compile(
         "use external io::send\nfn main(e: Word) -> Word { io::send(e) }"
     )
-    with pytest.raises(keleusma.VerifyError, match="use external"):
-        keleusma.VM(module, natives={"io::send": _double})
+    native = keleusma.Native(_double, max_invocations=1)
+    vm = keleusma.VM(module, natives={"io::send": native})
+    assert vm.call(21) == keleusma.Finished(42)
 
 
 # Bounds.

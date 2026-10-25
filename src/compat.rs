@@ -71,6 +71,20 @@ pub fn shared_slot_offset(slot: &keleusma::bytecode::SharedSlotLayout) -> Option
     Some(usize::from(slot.offset))
 }
 
+/// A native context over `arena` at `widths`, for natives Keleusma calls without one.
+/// The opaque registry is not reachable from outside a run, so an opaque field of a
+/// flat argument does not resolve in such a native.
+/// KELEUSMA-0.2.2: on 0.2.3 `NativeCtx` also has `addr_bytes`, and with PR 517
+/// `rodata`.
+pub fn native_ctx(arena: &Arena, widths: Widths) -> NativeCtx<'_> {
+    NativeCtx {
+        arena,
+        opaques: &[],
+        word_bytes: widths.word_bytes,
+        float_bytes: widths.float_bytes,
+    }
+}
+
 /// Resolve an opaque registry index through `decode`, Keleusma's only public path to
 /// the registry.
 ///

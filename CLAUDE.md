@@ -13,7 +13,7 @@ PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and t
 package is `keleusma`.
 
 **Status.** Cut on 2026-10-24. Version 0.1.0 builds against the published Keleusma 0.2.2,
-and tasks 1 to 13 of the first milestone are done. The binding covers what the Keleusma
+and tasks 1 to 14 of the first milestone are done. The binding covers what the Keleusma
 book describes, except what is blocked on Keleusma. CI tests Linux, macOS and Windows,
 and wheels are built but not published. The milestone is
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md), the design is

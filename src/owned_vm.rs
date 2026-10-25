@@ -58,6 +58,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use keleusma::Arena;
 use keleusma::bytecode::{LoadError, Module, Value};
 use keleusma::opaque::HostOpaque;
+
+use crate::external::SharedTable;
 use keleusma::verify::module_runtime_footprint;
 use keleusma::vm::{
     Vm, VmError, VmState, auto_arena_capacity_for, required_persistent_capacity_for,
@@ -210,6 +212,9 @@ pub struct OwnedVm {
     /// its plain swap ignores the matrix, so the binding enforces the matrix itself,
     /// as [`Self::replace_module`] explains.
     trusted: Vec<ed25519_dalek::VerifyingKey>,
+    /// The closures behind this VM's `use external` natives, made reachable to the
+    /// trampolines for the duration of each run, as `src/external.rs` explains.
+    external: SharedTable,
 }
 
 impl OwnedVm {
@@ -264,12 +269,24 @@ impl OwnedVm {
             cell,
             plan,
             trusted,
+            external: SharedTable::default(),
         })
     }
 
     /// The arena's total capacity in bytes.
     pub fn arena_capacity(&self) -> usize {
         self.cell.borrow_owner().capacity()
+    }
+
+    /// An upper bound on the most arena memory in use at once since construction, in
+    /// bytes: the persistent region plus the peak of each end of the working region.
+    /// The two peaks need not have occurred together, so the sum may overstate.
+    pub fn arena_peak_bytes(&self) -> usize {
+        let arena = self.cell.borrow_owner();
+        arena
+            .persistent_capacity()
+            .saturating_add(arena.bottom_peak())
+            .saturating_add(arena.top_peak())
     }
 
     /// The arena, for reading a result that lives in it.
@@ -299,8 +316,11 @@ impl OwnedVm {
         shared: &mut [u8],
         args: &[Value],
     ) -> Result<VmState, VmError> {
-        self.cell
-            .with_dependent_mut(|_arena, vm| vm.call_with_shared(shared, args))
+        let external = &self.external;
+        self.cell.with_dependent_mut(|arena, vm| {
+            let _entered = crate::external::enter(external, arena);
+            vm.call_with_shared(shared, args)
+        })
     }
 
     /// The size in bytes of the module's shared data block, zero if it has none.
@@ -485,8 +505,25 @@ impl OwnedVm {
         shared: &mut [u8],
         input: Value,
     ) -> Result<VmState, VmError> {
-        self.cell
-            .with_dependent_mut(|_arena, vm| vm.resume_with_shared(shared, input))
+        let external = &self.external;
+        self.cell.with_dependent_mut(|arena, vm| {
+            let _entered = crate::external::enter(external, arena);
+            vm.resume_with_shared(shared, input)
+        })
+    }
+
+    /// The table behind this VM's external natives.
+    pub fn external_table(&self) -> SharedTable {
+        std::rc::Rc::clone(&self.external)
+    }
+
+    /// Register `name` as an external native served by trampoline `index`, with the
+    /// host's attested bound on calls per stream iteration.
+    pub fn register_external_native(&mut self, name: &str, index: usize, max_invocations: u32) {
+        let trampoline = crate::external::TRAMPOLINES[index];
+        self.cell.with_dependent_mut(|_arena, vm| {
+            vm.register_external_native(name, trampoline, max_invocations);
+        });
     }
 }
 

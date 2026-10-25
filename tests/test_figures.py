@@ -119,3 +119,34 @@ def test_an_unknown_opcode_is_refused() -> None:
 def test_a_module_without_a_stream_has_no_figure() -> None:
     vm = keleusma.VM(keleusma.compile("fn main() -> Word { 1 }"))
     assert vm.wcet_per_iteration_with({"CheckedAdd": 5}) is None
+
+
+# The arena's measured use, which shows how much of the sizing margin a host's own
+# scripts need.
+
+
+def test_the_peak_grows_with_use_and_stays_within_the_arena() -> None:
+    module = keleusma.compile(
+        "loop main(e: (Text, Word)) -> (Text, Word) { let n = yield e; n }"
+    )
+    vm = keleusma.VM(module)
+    fresh = vm.arena_peak_bytes
+    vm.call(("abc", 1))
+    after_one = vm.arena_peak_bytes
+    for i in range(1_000):
+        vm.step(("abcdefgh", i))
+    assert fresh <= after_one <= vm.arena_peak_bytes <= vm.arena_capacity
+    assert after_one > fresh
+
+
+def test_the_crate_scripts_leave_headroom() -> None:
+    # Measured, not proven: every vendored script peaks below the arena it was sized
+    # for, which is what the empirical margin is meant to ensure.
+    from pathlib import Path
+
+    scripts = sorted((Path(__file__).parent / "keleusma_scripts").glob("*.kel"))
+    assert scripts
+    for script in scripts:
+        vm = keleusma.VM(keleusma.compile(script.read_text(encoding="utf-8")))
+        vm.call()
+        assert vm.arena_peak_bytes < vm.arena_capacity, script.name

@@ -94,7 +94,10 @@ confirmed against the published release.
     Python through `vm_error`'s general arm as `VMError`. Consider a clearer message.
 16. **Stricter compilation.** Fact. The category-call discipline may reject programs
     that compiled before. Run the test suite and the book survey again.
-17. **Unchanged paths the binding relies on.** Fact. `Vm::decode` and
+17. **External natives.** Fact. `register_external_native` keeps its function-pointer
+    signature on the branch. `compat::native_ctx` builds the context the trampolines
+    pass, and gains `addr_bytes`, and `rodata` with PR 517.
+18. **Unchanged paths the binding relies on.** Fact. `Vm::decode` and
     `Value::OpaqueRef`, which `compat::resolve_opaque` uses, the cost model API, the
     `wire_format` functions and the Cargo features are unchanged.
 
@@ -103,8 +106,8 @@ confirmed against the published release.
 - An accessor for the bytecode image, for item 3.
 - An accessor for the opaque registry, replacing `compat::resolve_opaque`.
 - An accessor for private slot values, so a hot swap can carry them forward.
-- A closure-based `register_external_native` with a native context, so a Python
-  callable can serve a `use external` native.
+- A closure-based `register_external_native` with a native context, which would
+  retire the trampoline pool in `src/external.rs`.
 - A host-side halting `VmError` variant, replacing the `InvalidBytecode` carrier in
   `src/natives.rs`.
 - Fixes for items 5, 6 and 9, and for the footprint analysis's unbounded recursion on
