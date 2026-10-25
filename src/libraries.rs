@@ -4,7 +4,14 @@
 //! processes and files, so a script can use it only when its host names it in
 //! `libraries=`, and the host bears the consequences of offering it.
 
+use std::collections::BTreeMap;
+
+use keleusma::lexer::tokenize;
+use keleusma::parser::parse;
 use keleusma::stddsl::{Audio, Math, Shell};
+use keleusma::target::Target;
+
+use crate::types::{NativeDecl, native_decls};
 
 /// A bundled library, by the name Python uses for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +54,27 @@ impl Library {
             .collect()
     }
 
+    /// The library's declarations, read with the binding's own type resolver, so they
+    /// compare with a script's declarations of the same natives. `None` if Keleusma's
+    /// published signatures do not parse, which would be a Keleusma defect.
+    pub fn declarations(self) -> Option<BTreeMap<String, NativeDecl>> {
+        let source = format!("{}\nfn main() -> Word {{ 0 }}\n", self.signatures());
+        let program = parse(&tokenize(&source).ok()?).ok()?;
+        Some(native_decls(
+            &program,
+            Target::host().fixed_default_frac_bits(),
+        ))
+    }
+
+    /// The library's own `use` line for `name`, for error messages.
+    pub fn declaration_line(self, name: &str) -> Option<&'static str> {
+        let prefix = format!("use {name}(");
+        self.signatures()
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&prefix))
+    }
+
     /// Register the library's natives on `vm`.
     pub fn register(self, vm: &mut keleusma::vm::Vm<'static, '_>) {
         match self {
@@ -77,6 +105,18 @@ mod tests {
                 .native_names()
                 .contains(&"shell::getenv".to_string())
         );
+    }
+
+    #[test]
+    fn every_library_declares_every_native_it_names() {
+        for library in [Library::Math, Library::Audio, Library::Shell] {
+            let declarations = library.declarations().expect("signatures parse");
+            for name in library.native_names() {
+                let declaration = declarations.get(&name).expect("declared");
+                assert!(declaration.signature.is_some(), "{name} has a signature");
+                assert!(library.declaration_line(&name).is_some());
+            }
+        }
     }
 
     #[test]

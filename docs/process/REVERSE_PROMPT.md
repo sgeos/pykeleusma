@@ -4,33 +4,29 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, coverage of the Keleusma book, task 12
+## 2026-10-25, library declaration check, bytecode trust note, no co-author trailer
 
-**Goal.** Make `pykeleusma` act as a bridge for all functionality the Keleusma book
-describes, and report anything broken. The operator also corrected the units of
-`wcet_per_iteration` to nominal cycles.
+**Goal.** Add the library signature check and the bytecode trust note, remove the
+co-authored note, and stay on Keleusma 0.2.2.
 
-**Done.** Structs, enums, options and newtypes convert at the boundary. Natives report
-recoverable errors through `keleusma.NativeError`, and `vm.reset()` recovers a failed
-VM. `libraries=` offers the bundled `math`, `audio` and `shell` natives. Modules
-serialise, sign, encrypt and load, and `vm.replace_module` swaps them with a trust
-matrix. The crate's ten example scripts give their stated results. The units now read
-nominal cycles everywhere, and `pydromon` was told.
+**Library declarations.** A module whose declaration of a library-served native
+differs from the library's signature is refused, at construction and at a swap. A host
+callable for the native and a bare `use` line are not checked, for reasons the design
+records. The published signatures of all three libraries pass the check.
 
-**Defects found in the binding and fixed.** A script's native-error handler caught every
-Python exception, with the code -1, which would have swallowed a `KeyboardInterrupt`.
-A native error the script handled could mask a later runtime error in the same call.
-Both have tests that fail without the fix.
+**A further binding defect, found while testing and fixed.** After a hot swap, a native
+served by a host callable kept converting by the first module's declaration. Every
+swap now rebuilds those closures. Both changes have tests that fail without them.
 
-**Defects found in Keleusma 0.2.2, reported to `v0.2.3` and worked around.** Signed hot
-swap fails on every signed module. The plain swap ignores the trust matrix. The swap's
-resource check admits a module that construction would refuse. The FAQ says text
-doubling with `s + s` runs, and in 0.2.2 it fails with a type error. An earlier version
-of the report said the swap made no resource check at all, which was wrong and was
-corrected in a second message.
+**Bytecode trust.** The README, the design, the `load_module` docstring and the stub
+state that bytecode is code, that the checksum is not authentication, that Keleusma's
+decoder is not known to be robust against crafted bytes, and that a signature
+identifies a producer rather than making bytes safe. No fuzzing was done.
 
-**Verification.** 325 Python tests and 29 Rust tests pass locally, with pyright, ruff,
-rustfmt and clippy clean. Seven mutations of the new safeguards were each caught. Of
-the 73 programs in the book, 41 were run, and the other 32 were not checked further.
+**Co-author trailer.** Removed from `CLAUDE.md` and omitted from this commit. Earlier
+commits keep theirs, because removing them would need a force-push.
 
-**Not supported.** Listed in `HANDOFF.md` under Open and in the design.
+**Keleusma version.** Staying on 0.2.2, recorded in `HANDOFF.md`.
+
+**Verification.** 334 Python tests and 30 Rust tests pass locally, with pyright, ruff,
+rustfmt and clippy clean.

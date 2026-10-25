@@ -36,7 +36,12 @@ def load_module(
     verifying_keys: Sequence[bytes] | None = None,
     decryption_key: bytes | None = None,
 ) -> Module:
-    """Load a module from wire-format bytes, verifying or decrypting it as needed."""
+    """Load a module from wire-format bytes, verifying or decrypting it as needed.
+
+    Bytecode is code. Load unsigned bytes only from a source trusted as the script's
+    own source would be, because Keleusma's decoder is not known to be robust against
+    crafted input. A signature identifies the producer, it does not make bytes safe.
+    """
 
 def library_signatures(name: str) -> str: ...
 def signing_public_key(seed: bytes) -> bytes: ...

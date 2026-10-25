@@ -114,6 +114,57 @@ fn host_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>>
     Ok(buffer)
 }
 
+/// Refuse a module whose declaration of a library native differs from the library's.
+///
+/// Keleusma's compiler takes a script's `use math::sqrt(...) -> ...` line on trust and
+/// does not compare it with the library's real signature. A library native is Rust
+/// code that builds its result by its own signature, while the binding converts the
+/// result by the script's declared type, so a mismatch reads a value as a type it does
+/// not have. A probe of `shell::run` declared with its tuple reversed returned wrong
+/// values silently, and Keleusma 0.2.2 is known to crash when a body is decoded with
+/// a mismatched type. Only natives a library serves are checked, because the binding
+/// converts a host callable's values by the script's declaration on both sides. A bare
+/// `use` line and a module without declarations convert untyped, by each value's own
+/// tag, and are not checked.
+fn check_library_declarations(
+    libraries: &[Library],
+    boundary: &Boundary,
+    names: &[String],
+    host_served: impl Fn(&str) -> bool,
+) -> PyResult<()> {
+    for library in libraries {
+        let provided = library.native_names();
+        let declarations = library.declarations().ok_or_else(|| {
+            VerifyError::new_err("the library's published signatures do not parse")
+        })?;
+        for name in names
+            .iter()
+            .filter(|n| provided.contains(n) && !host_served(n))
+        {
+            let Some(script) = boundary
+                .natives
+                .get(name)
+                .and_then(|d| d.signature.as_ref())
+            else {
+                continue;
+            };
+            let library_signature = declarations.get(name).and_then(|d| d.signature.as_ref());
+            if library_signature != Some(script) {
+                let expected = library
+                    .declaration_line(name)
+                    .unwrap_or("its published one");
+                return Err(VerifyError::new_err(format!(
+                    "the script declares the library native `{name}` with a signature that \
+                     differs from the library's, `{expected}`; declare it as the library \
+                     does, as `keleusma.library_signatures` gives it, or pass a host \
+                     callable for it"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn unknown_native(name: &str, names: &[String]) -> PyErr {
     let known = if names.is_empty() {
         "it uses no natives".to_string()
@@ -243,6 +294,9 @@ impl VM {
                 slot.wcmu_bytes = wcmu_bytes.unwrap_or(DEFAULT_NATIVE_WCMU_BYTES);
             }
         }
+        check_library_declarations(&libraries, &boundary, &names, |n| {
+            slots.get(n).is_some_and(|s| s.callable.is_some())
+        })?;
         let native_wcmu: Vec<u32> = names.iter().map(|n| slots[n].wcmu_bytes).collect();
         let bounds: Vec<(String, u32, u32)> = names
             .iter()
@@ -400,6 +454,17 @@ impl VM {
         }
         module.check_signature_route()?;
         let boundary = module.boundary().clone();
+        check_library_declarations(
+            &self.libraries,
+            &boundary,
+            &module.inner().native_names,
+            |n| {
+                self.registry
+                    .borrow()
+                    .get(n)
+                    .is_some_and(|s| s.callable.is_some())
+            },
+        )?;
         if let Some(external) = module
             .inner()
             .native_names
@@ -454,27 +519,39 @@ impl VM {
             }
             other => vm_error(&other),
         })?;
-        // The new module may name natives the old one did not. Each gets a slot and a
-        // closure, satisfied by a registered library where one provides it.
+        // The new module may name natives the old one did not. Each gets a slot,
+        // satisfied by a registered library where one provides it. Every native not
+        // served by a library gets a fresh closure, because a closure converts by the
+        // declaration of the module it was built for, and the new module may declare a
+        // native differently. A stale declaration would build a value of the old type
+        // where the new module expects the new one.
         let provided: Vec<String> = self
             .libraries
             .iter()
             .flat_map(|l| l.native_names())
             .collect();
         for name in &module.inner().native_names {
-            if self.registry.borrow().contains_key(name) {
-                continue;
-            }
-            let library = provided.contains(name);
-            self.registry.borrow_mut().insert(
-                name.clone(),
-                Slot {
-                    callable: None,
-                    wcet: DEFAULT_NATIVE_WCET,
-                    wcmu_bytes: DEFAULT_NATIVE_WCMU_BYTES,
-                    library,
-                },
-            );
+            let existing = self
+                .registry
+                .borrow()
+                .get(name)
+                .map(|slot| slot.library && slot.callable.is_none());
+            let library = match existing {
+                Some(served_by_library) => served_by_library,
+                None => {
+                    let library = provided.contains(name);
+                    self.registry.borrow_mut().insert(
+                        name.clone(),
+                        Slot {
+                            callable: None,
+                            wcet: DEFAULT_NATIVE_WCET,
+                            wcmu_bytes: DEFAULT_NATIVE_WCMU_BYTES,
+                            library,
+                        },
+                    );
+                    library
+                }
+            };
             if !library {
                 let decl = boundary.natives.get(name).cloned();
                 let func = closure(

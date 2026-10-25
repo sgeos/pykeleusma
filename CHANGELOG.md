@@ -72,6 +72,15 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A native served by a host callable kept converting by the declaration of the module
+  it was first built for after a hot swap. Each swap now rebuilds the closures.
+- A script's declaration of a library native is now checked against the library's own
+  signature at construction and at a swap, because Keleusma does not check it and a
+  mismatch made the binding read a value as the wrong type.
+- The README, the design and `load_module` now state that bytecode is code, that its
+  checksum is not authentication, and that unsigned bytes should come only from a
+  trusted source.
+
 - The units of `vm.wcet_per_iteration` and of native time bounds are now documented as
   nominal cycles, from Keleusma's nominal cost model, rather than as unitless units
   that are not cycles.

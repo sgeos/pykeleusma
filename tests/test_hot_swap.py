@@ -186,3 +186,24 @@ def test_an_encrypted_module_cannot_be_swapped_in() -> None:
 def test_a_malformed_verifying_key_is_refused() -> None:
     with pytest.raises(ValueError, match="32 bytes"):
         keleusma.VM(SMALL).register_verifying_key(b"short")
+
+
+def _four(x: int) -> int:
+    return 4
+
+
+def test_a_native_converts_by_the_swapped_modules_declaration() -> None:
+    # The same callable serves both modules. Before the fix, its closure kept the
+    # first module's declaration and built a Word where the second expects a Float.
+    as_word = keleusma.compile(
+        "use host::f(Word) -> Word\nfn main(x: Word) -> Word { host::f(x) }"
+    )
+    as_float = keleusma.compile(
+        "use host::f(Word) -> Float\nfn main(x: Word) -> Float { host::f(x) }"
+    )
+    vm = keleusma.VM(as_word, natives={"host::f": _four})
+    assert vm.call(1) == keleusma.Finished(4)
+    vm.replace_module(as_float)
+    state = vm.call(1)
+    assert state == keleusma.Finished(4.0)
+    assert isinstance(state, keleusma.Finished) and isinstance(state.value, float)
