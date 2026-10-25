@@ -30,6 +30,8 @@ completed, moved or abandoned.
   on, and a ruleset blocking force-pushes to and deletion of `main`. Keleusma's
   required linear history is not copied, because this repository merges with merge
   commits. No status check is required, because path filters skip workflows. The
+  protected `pypi` environment exists, with the operator as required reviewer and
+  `v*` tags only. The
   README carries badges, and `.github` holds issue and pull request templates.
 - **Tasks 1 to 15 done.** Task 15 made the README list the limitations before the
   guarantees, separating those expected to clear with Keleusma 0.2.3. Task 13 resolved the known issues and debt, and prepared for
