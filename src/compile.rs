@@ -32,7 +32,9 @@ use pyo3::types::PyBytes;
 
 use crate::convert::Widths;
 use crate::crypto;
-use crate::types::{EntrySignature, NativeDecl, native_decls};
+use crate::types::{
+    DataVisibility, Declared, EntrySignature, NativeDecl, data_block, native_decls,
+};
 use crate::yield_check;
 use keleusma::wire_format;
 
@@ -58,12 +60,15 @@ pub struct Module {
 /// How a signed module was verified, and the keys it was verified against.
 #[derive(Debug, Clone)]
 pub struct SignedImage {
-    /// The signed bytes, which Keleusma's signed loader verifies again when a VM is
-    /// built. `None` for a module that was encrypted. Its signature covers the
-    /// encrypted form, which Keleusma verifies while decrypting, so the decrypted
-    /// module carries no signature of its own to verify again, exactly as in
-    /// Keleusma's own encrypted loader.
-    pub bytes: Option<Vec<u8>>,
+    /// The bytes as they were loaded, whose signature a VM's trust matrix verifies
+    /// again at a hot swap. For an encrypted module these are the encrypted bytes,
+    /// because the signature covers the encrypted form, and Keleusma verifies that
+    /// form without the decryption key.
+    pub bytes: Vec<u8>,
+    /// Whether `bytes` are encrypted. The decoded module then came from decrypting
+    /// them, which authenticated the ciphertext, and carries its signature flag
+    /// cleared, as in Keleusma's own encrypted loader.
+    pub encrypted: bool,
     pub keys: Vec<ed25519_dalek::VerifyingKey>,
 }
 
@@ -77,6 +82,11 @@ pub struct Boundary {
     pub widths: Widths,
     /// What the program's `use` lines declare about each named native.
     pub natives: BTreeMap<String, NativeDecl>,
+    /// The shared `data` block as a struct of its declared fields, or `None` for a
+    /// module without one or loaded from bytes, which carries no declarations.
+    pub shared: Option<Declared>,
+    /// The private `data` block likewise, whose fields a hot swap may seed.
+    pub private: Option<Declared>,
 }
 
 impl Module {
@@ -290,6 +300,8 @@ pub fn compile(py: Python<'_>, source: &str) -> PyResult<Module> {
         signature: EntrySignature::from_program(&program, default_frac_bits),
         widths: Widths::of(&inner),
         natives: native_decls(&program, default_frac_bits),
+        shared: data_block(&program, default_frac_bits, DataVisibility::Shared),
+        private: data_block(&program, default_frac_bits, DataVisibility::Private),
     };
     Ok(Module {
         inner,
@@ -348,7 +360,12 @@ pub fn load_module(
         // Verifies the signature over the encrypted form, then decrypts.
         let plain = wire_format::decrypt_encrypted_signed_to_signed_bytes(data, &keys, private)
             .map_err(|e| VerifyError::new_err(format!("{e:?}")))?;
-        (plain, Some(SignedImage { bytes: None, keys }))
+        let image = SignedImage {
+            bytes: data.to_vec(),
+            encrypted: true,
+            keys,
+        };
+        (plain, Some(image))
     } else if decryption_key.is_some() {
         // A host that passes a decryption key expects a confidential module, so a
         // plaintext one is refused rather than accepted silently.
@@ -364,7 +381,8 @@ pub fn load_module(
         wire_format::verify_module_signature(data, &keys)
             .map_err(|e| VerifyError::new_err(format!("{e:?}")))?;
         let image = SignedImage {
-            bytes: Some(data.to_vec()),
+            bytes: data.to_vec(),
+            encrypted: false,
             keys,
         };
         (data.to_vec(), Some(image))
@@ -379,13 +397,21 @@ pub fn load_module(
         KeleusmaModule::from_bytes(&bytes).map_err(|e| LoadError::new_err(format!("{e:?}")))?;
     // A decrypted module was verified during decryption, so it is built like an
     // unsigned one, as Keleusma's own encrypted loader does.
-    if matches!(&signed, Some(SignedImage { bytes: None, .. })) {
+    if matches!(
+        &signed,
+        Some(SignedImage {
+            encrypted: true,
+            ..
+        })
+    ) {
         inner.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
     }
     let boundary = Boundary {
         signature: None,
         widths: Widths::of(&inner),
         natives: BTreeMap::new(),
+        shared: None,
+        private: None,
     };
     Ok(Module {
         inner,

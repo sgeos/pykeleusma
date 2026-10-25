@@ -10,24 +10,18 @@ completed, moved or abandoned.
 ## State on 2026-10-25
 
 - **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
-- **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
-  and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
-  local check, and the Rust tests under Miri with Tree Borrows.
-- **Tasks 1 to 12 done.** Task 12, added at the operator's request, covers what the
-  Keleusma book describes: structs, enums and options at the boundary, recoverable
-  native errors, `vm.reset()`, bundled libraries, precompiled, signed and encrypted
-  bytecode, and hot swap with a trust matrix. The crate's ten example scripts run in
-  `tests/test_book.py`. The design records it under Book coverage.
-- **Units.** `wcet_per_iteration` is documented in nominal cycles since the operator's
-  correction on 2026-10-25. `pydromon` was notified.
-- **Keleusma version.** The operator decided on 2026-10-25 to stay on Keleusma 0.2.2.
-- **Commit trailer.** Commits carry no `Co-Authored-By` trailer since 2026-10-25, at
-  the operator's instruction. Earlier commits were not rewritten.
-- **Safety checks.** A script's declaration of a library native must match the
-  library's signature. Bytecode is documented as code, to be loaded unsigned only from
-  a trusted source.
-- **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
-  safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
+- **Continuous integration.** `ci.yml` covers Linux, macOS and Windows with Python
+  3.12 and 3.15, every local check, and Miri with Tree Borrows. `wheels.yml` builds and
+  smoke-tests wheels for five platforms and an sdist, and publishes nothing.
+- **Tasks 1 to 13 done.** Task 13 resolved the known issues and debt, and prepared
+  for Keleusma 0.2.3. It added opaque host values, multiword big numbers, typed shared
+  data, private seeding at a swap, encrypted swaps, const generics and custom cost
+  models. It also fixed a crash that fuzzing found. The version is 0.1.0.
+- **Migration.** `docs/architecture/MIGRATION_V0_2_3.md` is the plan. `src/compat.rs`
+  holds the changed calls, `src/canaries.rs` pins 0.2.2 behaviours, and every
+  workaround carries `KELEUSMA-0.2.2`.
+- **Decisions.** Stay on Keleusma 0.2.2. Commits carry no `Co-Authored-By` trailer.
+  Units are nominal cycles.
 
 ## Standing permission
 
@@ -37,37 +31,26 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
 
-The 0.1.0 milestone's tasks are complete. Before a release, `Cargo.toml` still says
-version `0.0.0`, no workflow builds wheels, and Windows is untested. A release to PyPI
-needs the operator's confirmation in session. Other candidates are fuzzing
-`load_module`, finishing the survey of the 32 book programs not yet run, a typed view
-of shared data blocks, and carrying private data across a hot swap.
+Wait for Keleusma 0.2.3 to be published, with `keleusma-wire`, then follow the
+migration plan. A PyPI release of 0.1.0 needs the operator's confirmation.
 
 ## Open
 
-- **Keleusma workarounds.** The binding works around three hot swap behaviours of
-  Keleusma 0.2.2, described in the design under Book coverage. Each should be
-  revisited after an upgrade.
-- **Not supported.** `use external` natives, generic structs and enums, nested options,
-  refined newtypes as inputs, multiword big numbers, typed shared data, private data
-  carried across a swap, swapping in an encrypted module, and calibrated cost models.
-- **Yield guard is partial.** A yielded expression with no recorded type is not
-  compared. No crash was found past the guard, but only a Keleusma fix closes it.
-- **One iteration per frame, not one resume.** A Keleusma 0.2.2 stream iteration is
-  always one yield and one `Reset`, so task 8's frame loop resumes twice per frame.
-- **Arena margin is empirical.** Task 3 covers the observed shortfall of one operand
-  stack doubling. It is not a proven bound. A Rust test fails if Keleusma fixes its
-  footprint, prompting a review.
-- **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, with only
-  the interim reply `v023-20261025-dynamic-host-interim`. The reply
-  `v023-20261025-yield-soundness-reply` confirmed the yield crash, fixed it in their
-  PR 517 for 0.2.3, and noted that a 0.2.2.x patch needs operator authorization. It
-  also named decoding with a mismatched type as a second crash route, which led to the
-  library declaration check. Request
-  `pykeleusma-20261025-book-coverage-findings`, reporting the signed hot swap failure,
-  the plain swap ignoring the trust matrix, a loose swap resource check and the text
-  concatenation discrepancy with the FAQ, with its correction
-  `pykeleusma-20261025-book-coverage-correction` to the resource check item.
+- **Blocked on Keleusma.** `use external` natives, the old module's private values at
+  a swap, composite private seeding, type-generic instances and const-generic enum
+  inputs, and the `rodata` accessor PR 517 makes necessary. Requested in
+  `pykeleusma-20261025-migration-prep`.
+- **Keleusma workarounds.** Three hot swap behaviours, the footprint analysis on
+  unverified modules, the opaque registry route and the halting-error carrier. The
+  migration plan lists each.
+- **Yield guard is partial** until a release with PR 517 is pinned, which `v0.2.3`
+  reported merged in `v023-20261025-pr517-merged-py`.
+- **One iteration per frame, not one resume.** A 0.2.2 stream iteration is one yield
+  and one `Reset`, so task 8's frame loop resumes twice per frame.
+- **Arena margin is empirical.** A canary fails if Keleusma fixes its footprint.
+- **With `v0.2.3`.** Unanswered requests `pykeleusma-20261025-dynamic-host-findings`,
+  `pykeleusma-20261025-book-coverage-findings` with its correction, and
+  `pykeleusma-20261025-migration-prep`.
 
 ## Environment
 
@@ -96,8 +79,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 334 tests pass
-cargo test                  # 30 Rust tests pass
+uv sync && uv run pytest    # 379 tests pass
+cargo test                  # 41 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

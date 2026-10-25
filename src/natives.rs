@@ -108,7 +108,8 @@ pub fn closure(
 
 /// The start of the message of the halting error a native returns when its callable
 /// raised an exception other than `keleusma.NativeError`. Keleusma has no halting
-/// error for a host failure, so `InvalidBytecode` carries it. The VM never shows the
+/// error for a host failure, so `InvalidBytecode` carries it. KELEUSMA-0.2.2: the
+/// 0.2.3 branch adds no such variant either. The VM never shows the
 /// message, because it raises the stored exception instead.
 pub const NATIVE_RAISED: &str = "pykeleusma: the native";
 
@@ -157,12 +158,11 @@ fn invoke(
         .get(name)
         .and_then(|slot| slot.callable.as_ref().map(|c| c.clone_ref(py)))
         .ok_or_else(|| crate::vm::VMError::new_err(format!("native `{name}` is not registered")))?;
+    let resolve = |i: usize| ctx.opaques.get(i).cloned();
     let read = ReadContext {
         arena: ctx.arena,
-        widths: Widths {
-            word_bytes: ctx.word_bytes,
-            float_bytes: ctx.float_bytes,
-        },
+        widths: Widths::of_native(ctx),
+        opaque: &resolve,
     };
     let signature = decl.and_then(|d| d.signature.as_ref());
     let converted = match signature {

@@ -57,6 +57,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use keleusma::Arena;
 use keleusma::bytecode::{LoadError, Module, Value};
+use keleusma::opaque::HostOpaque;
 use keleusma::verify::module_runtime_footprint;
 use keleusma::vm::{
     Vm, VmError, VmState, auto_arena_capacity_for, required_persistent_capacity_for,
@@ -152,6 +153,19 @@ impl ArenaPlan {
         argument_bytes: usize,
         native_wcmu: &[u32],
     ) -> Result<Self, OwnedVmError> {
+        // KELEUSMA-0.2.2: kept on any version, since sizing must never analyse an
+        // unverified module. Keleusma's structural verifier runs first, as it does
+        // first in `Vm::new`. The
+        // footprint analyses below assume a well-formed control-flow graph, and a
+        // crafted module, found by fuzzing `keleusma.load_module`, sent
+        // `module_runtime_footprint` into unbounded recursion and overflowed the
+        // stack, while the verifier rejects the same module cleanly.
+        keleusma::verify::verify(module).map_err(|e| {
+            OwnedVmError::Vm(VmError::VerifyError(format!(
+                "{}: {}",
+                e.chunk_name, e.message
+            )))
+        })?;
         let footprint = auto_arena_capacity_for(module, native_wcmu).map_err(OwnedVmError::Vm)?;
         let heap = module_runtime_footprint(module, native_wcmu)
             .map_err(|e| {
@@ -337,9 +351,10 @@ impl OwnedVm {
     }
 
     /// Replace the module at an iteration boundary, as the book's chapter 37 describes,
-    /// with every private data slot of the new module starting as `()`, the state a
-    /// fresh VM starts in. Keleusma verifies the new module first and keeps the old one
-    /// if verification fails.
+    /// with the new module's private data slots holding `initial`, one value per
+    /// private slot in the order Keleusma lists them. [`Self::fresh_private_data`]
+    /// gives the state a fresh VM starts in. Keleusma verifies the new module first and
+    /// keeps the old one if verification fails.
     ///
     /// `native_wcmu` holds the declared memory bound of each native the new module
     /// names, in its `native_names` order.
@@ -347,16 +362,26 @@ impl OwnedVm {
     /// An unsigned module is refused once the VM trusts any key, the policy Keleusma's
     /// signed loader states, because a host that registered keys requires signed code.
     /// Keleusma 0.2.2's own `replace_module` does not apply that policy.
-    pub fn replace_module(&mut self, module: Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+    /// KELEUSMA-0.2.2: unchanged on the 0.2.3 branch, so this check stays.
+    pub fn replace_module(
+        &mut self,
+        module: Module,
+        native_wcmu: &[u32],
+        initial: Vec<Value>,
+    ) -> Result<(), VmError> {
         if !self.trusted.is_empty() {
             return Err(VmError::from(LoadError::InvalidSignature));
         }
-        self.install(module, native_wcmu)
+        self.install(module, native_wcmu, initial)
     }
 
-    fn install(&mut self, module: Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+    fn install(
+        &mut self,
+        module: Module,
+        native_wcmu: &[u32],
+        initial: Vec<Value>,
+    ) -> Result<(), VmError> {
         self.check_fits(&module, native_wcmu)?;
-        let initial = Self::fresh_private_data(&module);
         self.cell
             .with_dependent_mut(|_arena, vm| vm.replace_module(module, initial))
     }
@@ -370,11 +395,15 @@ impl OwnedVm {
     /// the same steps as Keleusma's signed loader instead, which verifies the bytes and
     /// clears the flag on the decoded module. `module` must be decoded from `bytes`,
     /// which `keleusma.load_module` guarantees by keeping both from one input.
+    /// KELEUSMA-0.2.2: fixed on the 0.2.3 branch, after which this may delegate to
+    /// `replace_module_from_bytes`, keeping the binding's own trust matrix and arena
+    /// check.
     pub fn replace_module_signed(
         &mut self,
         module: &Module,
         bytes: &[u8],
         native_wcmu: &[u32],
+        initial: Vec<Value>,
     ) -> Result<(), VmError> {
         if !wire_format::header_requires_signature(bytes) {
             return Err(VmError::from(LoadError::InvalidSignature));
@@ -382,7 +411,16 @@ impl OwnedVm {
         wire_format::verify_module_signature(bytes, &self.trusted).map_err(VmError::from)?;
         let mut module = module.clone();
         module.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
-        self.install(module, native_wcmu)
+        self.install(module, native_wcmu, initial)
+    }
+
+    /// The opaque value at `index` in the VM's registry, which a flat composite's
+    /// opaque field names. Keleusma keeps the registry private and resolves an index
+    /// only through `Vm::decode`, so the index is decoded as a value.
+    pub fn resolve_opaque(&self, index: usize) -> Option<std::sync::Arc<dyn HostOpaque>> {
+        crate::compat::resolve_opaque(index, |value| {
+            self.cell.with_dependent(|_arena, vm| vm.decode(value).ok())
+        })
     }
 
     /// Add a key to the trust matrix that signed hot swaps verify against.
@@ -393,6 +431,7 @@ impl OwnedVm {
     }
 
     fn check_fits(&self, module: &Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+        // KELEUSMA-0.2.2: unchanged on the 0.2.3 branch, so this check stays.
         // Keleusma's own `replace_module` checks the new module's bounds against the
         // arena's capacity, but without the natives' bounds and more loosely than
         // `Vm::new`, so a module that construction would refuse can be admitted and
@@ -414,7 +453,9 @@ impl OwnedVm {
     }
 
     /// Every private slot of `module` as `()`, the state a fresh VM starts in.
-    fn fresh_private_data(module: &Module) -> Vec<Value> {
+    /// KELEUSMA-0.2.2: on 0.2.3 a fresh VM starts scalar private slots at zero or their
+    /// declared initialiser, from `DataLayout::private_init`, which this should match.
+    pub fn fresh_private_data(module: &Module) -> Vec<Value> {
         let private_slots = module.data_layout.as_ref().map_or(0, |layout| {
             layout
                 .slots

@@ -196,7 +196,10 @@ def test_a_refined_newtype_is_refused_coming_in() -> None:
     ("source", "message"),
     [
         ("fn main(o: Option<Option<Word>>) -> Word { 1 }", "nested option"),
-        ("struct Box<T> { v: T }\nfn main(b: Box<Word>) -> Word { 1 }", "generic type"),
+        (
+            "struct Box<T> { v: T }\nfn main(b: Box<Word>) -> Word { 1 }",
+            "with type arguments",
+        ),
     ],
 )
 def test_unsupported_shapes_are_refused(source: str, message: str) -> None:
@@ -204,3 +207,29 @@ def test_unsupported_shapes_are_refused(source: str, message: str) -> None:
     with pytest.raises(TypeError, match=message):
         vm.call(None)
     assert not vm.failed
+
+
+def test_a_const_generic_struct_converts_as_instantiated() -> None:
+    module = keleusma.compile(
+        "struct Buf<const n: Word> { xs: [Word; n + 1] }\n"
+        "fn main(b: Buf<2>) -> Buf<2> { b }"
+    )
+    assert _call(module, {"xs": [1, 2, 3]}) == {"xs": [1, 2, 3]}
+    with pytest.raises(TypeError, match=r"\[Word; 3\]"):
+        keleusma.VM(module).call({"xs": [1, 2]})
+
+
+def test_a_const_generic_enum_leaves_the_script_but_cannot_come_in() -> None:
+    # Keleusma 0.2.2 records only the generic definition's layout, so a value the host
+    # built would be packed with the wrong size. One the script builds reads back.
+    module = keleusma.compile(
+        "enum E<const n: Word> { A([Word; n]), B }\n"
+        "fn main(x: Word) -> E<2> { if x > 0 { E::A([x, x]) } else { E::B } }"
+    )
+    assert _call(module, 3) == Variant("A", ([3, 3],))
+    assert _call(module, 0) == Variant("B")
+    echo = keleusma.compile(
+        "enum E<const n: Word> { A([Word; n]), B }\nfn main(e: E<2>) -> Word { 0 }"
+    )
+    with pytest.raises(TypeError, match="const-generic enum"):
+        keleusma.VM(echo).call("B")

@@ -28,37 +28,22 @@
 //! A value is converted immediately after the call that produced it, because a flat
 //! body is valid only until the next call or resume on the same VM.
 
+use std::sync::Arc;
+
 use keleusma::Arena;
 use keleusma::bytecode::{ArrayBody, EnumBody, StructBody, TupleBody, Value};
 use keleusma::flat_value::FlatComposite;
-use keleusma::marshall::{KeleusmaType, RefContext};
+use keleusma::opaque::HostOpaque;
 use keleusma::value_layout::LayoutDescriptor;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple};
 
-use crate::types::{OPTION_NONE, OPTION_SOME, Ty, Variant};
+use crate::types::{OPTION_NONE, OPTION_SOME, OutOnly, Ty, Variant};
 use crate::vm::VMError;
 
-/// The module's scalar widths in bytes, which flat bodies are packed with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Widths {
-    pub word_bytes: usize,
-    pub float_bytes: usize,
-}
-
-impl Widths {
-    /// Widths from a module header, which stores each as the base-2 logarithm of a
-    /// bit count.
-    pub fn of(module: &keleusma::bytecode::Module) -> Self {
-        let bytes = |log2: u8| (1usize << log2) / 8;
-        Self {
-            word_bytes: bytes(module.word_bits_log2),
-            float_bytes: bytes(module.float_bits_log2),
-        }
-    }
-}
+pub use crate::compat::Widths;
 
 fn type_error(expected: &Ty, obj: &Bound<'_, PyAny>) -> PyErr {
     let got = obj
@@ -141,10 +126,33 @@ pub fn to_value(obj: &Bound<'_, PyAny>, ty: &Ty) -> PyResult<Value> {
             Ok(Value::array(elements(items.into_iter(), &types)?))
         }
         Ty::Struct { name, fields } => struct_value(obj, ty, name, fields),
-        Ty::Refined { name, .. } => Err(PyTypeError::new_err(format!(
+        Ty::Opaque(name) => Ok(crate::opaque::to_value(obj, name)),
+        Ty::Multiword { words, frac_bits } => {
+            let words: Vec<i64> = obj
+                .py()
+                .import("keleusma._multiword")?
+                .getattr("to_words")?
+                .call1((obj, *words, *frac_bits))?
+                .extract()?;
+            Ok(Value::array(words.into_iter().map(Value::Int).collect()))
+        }
+        Ty::OutOnly {
+            name,
+            why: OutOnly::Refinement,
+            ..
+        } => Err(PyTypeError::new_err(format!(
             "`{name}` is a refined newtype, whose rule is script code the host cannot run, \
              so the host cannot supply one; pass the underlying value and let the script \
              build it"
+        ))),
+        Ty::OutOnly {
+            name,
+            why: OutOnly::GenericEnum,
+            ..
+        } => Err(PyTypeError::new_err(format!(
+            "`{name}` is an instance of a const-generic enum, which Keleusma 0.2.2 cannot \
+             receive from the host because it records only the generic definition's \
+             layout; pass the payload and let the script build the variant"
         ))),
         Ty::Enum { name, variants } => enum_value(obj, ty, name, variants),
         Ty::Option(inner) => {
@@ -200,6 +208,28 @@ fn enum_value(
     name: &str,
     variants: &[Variant],
 ) -> PyResult<Value> {
+    let (variant, payload) = variant_of(obj, ty, name, variants)?;
+    let values = payload
+        .iter()
+        .zip(&variant.fields)
+        .map(|(item, field_ty)| to_value(item, field_ty))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(Value::Enum(EnumBody::boxed_with_disc(
+        name.to_string(),
+        variant.name.clone(),
+        variant.disc,
+        values,
+    )))
+}
+
+/// The declared variant a `keleusma.Variant` or a variant's name names, and the
+/// payload it carries, checked against the variant's field count.
+fn variant_of<'a, 'py>(
+    obj: &Bound<'py, PyAny>,
+    ty: &Ty,
+    name: &str,
+    variants: &'a [Variant],
+) -> PyResult<(&'a Variant, Vec<Bound<'py, PyAny>>)> {
     let variant_class = obj.py().import("keleusma._values")?.getattr("Variant")?;
     let (variant_name, payload): (String, Vec<Bound<'_, PyAny>>) =
         if obj.is_instance(&variant_class)? {
@@ -230,23 +260,167 @@ fn enum_value(
             payload.len()
         )));
     }
-    let values = payload
-        .iter()
-        .zip(&variant.fields)
-        .map(|(item, field_ty)| to_value(item, field_ty))
-        .collect::<PyResult<Vec<_>>>()?;
-    Ok(Value::Enum(EnumBody::boxed_with_disc(
-        name.to_string(),
-        variant_name,
-        variant.disc,
-        values,
-    )))
+    Ok((variant, payload))
+}
+
+/// Encode `obj`, of the declared type `ty`, into `buf`, which is exactly the bytes a
+/// value of `ty` occupies in a flat layout at `widths`. Used for the shared `data`
+/// block, which the binding writes for the host.
+///
+/// Every byte of `buf` is written, padding included, so a shorter enum variant
+/// leaves no stale bytes. Only scalar values reach `write_scalar_le`, which panics on
+/// text, opaques and composites. Text and opaque fields are refused, as Keleusma's
+/// data-segment rules refuse them.
+pub fn write_flat(buf: &mut [u8], obj: &Bound<'_, PyAny>, ty: &Ty, widths: Widths) -> PyResult<()> {
+    let layout = ty.layout();
+    if buf.len() != widths.size_of(&layout) {
+        return Err(VMError::new_err(format!(
+            "a slot of {} bytes for {}, which needs {}",
+            buf.len(),
+            ty.name(),
+            widths.size_of(&layout)
+        )));
+    }
+    buf.fill(0);
+    let field = |buf: &mut [u8], index: usize, item: &Bound<'_, PyAny>, field_ty: &Ty| {
+        let offset = widths
+            .offset_of(&layout, index)
+            .ok_or_else(|| mismatch(field_ty, "a field outside its composite"))?;
+        let size = widths.size_of(&field_ty.layout());
+        let slot = offset
+            .checked_add(size)
+            .and_then(|end| buf.get_mut(offset..end))
+            .ok_or_else(|| mismatch(field_ty, "a field past the end of its composite"))?;
+        write_flat(slot, item, field_ty, widths)
+    };
+    match ty {
+        Ty::Unit | Ty::Bool | Ty::Byte | Ty::Word | Ty::Fixed(_) | Ty::Float => {
+            write_scalar(buf, &to_value(obj, ty)?, widths)
+        }
+        Ty::Text | Ty::Opaque(_) => Err(PyTypeError::new_err(format!(
+            "a data block cannot hold {}, as Keleusma's data-segment rules refuse it",
+            ty.name()
+        ))),
+        Ty::Tuple(types) => {
+            let tuple = obj.cast::<PyTuple>().map_err(|_| type_error(ty, obj))?;
+            if tuple.len() != types.len() {
+                return Err(type_error(ty, obj));
+            }
+            for (index, (item, field_ty)) in tuple.iter().zip(types).enumerate() {
+                field(buf, index, &item, field_ty)?;
+            }
+            Ok(())
+        }
+        Ty::Array(element, count) => {
+            let items: Vec<Bound<'_, PyAny>> = if let Ok(list) = obj.cast::<PyList>() {
+                list.iter().collect()
+            } else if let Ok(tuple) = obj.cast::<PyTuple>() {
+                tuple.iter().collect()
+            } else {
+                return Err(type_error(ty, obj));
+            };
+            if items.len() != *count {
+                return Err(type_error(ty, obj));
+            }
+            for (index, item) in items.iter().enumerate() {
+                field(buf, index, item, element)?;
+            }
+            Ok(())
+        }
+        Ty::Multiword { words, frac_bits } => {
+            let list = obj
+                .py()
+                .import("keleusma._multiword")?
+                .getattr("to_words")?
+                .call1((obj, *words, *frac_bits))?;
+            write_flat(buf, &list, &Ty::Array(Box::new(Ty::Word), *words), widths)
+        }
+        Ty::Struct { name, fields } => {
+            let mapping = obj.cast::<PyMapping>().map_err(|_| type_error(ty, obj))?;
+            if mapping.len()? != fields.len() {
+                return Err(type_error(ty, obj));
+            }
+            for (index, (field_name, field_ty)) in fields.iter().enumerate() {
+                let item = mapping.get_item(field_name).map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "expected {name} to have the field `{field_name}`"
+                    ))
+                })?;
+                field(buf, index, &item, field_ty)?;
+            }
+            Ok(())
+        }
+        Ty::Enum { name, variants } => {
+            let (variant, payload) = variant_of(obj, ty, name, variants)?;
+            write_variant(buf, variant.disc, &payload, &variant.fields, widths)
+        }
+        Ty::Option(inner) => {
+            if obj.is_none() {
+                write_variant(buf, OPTION_NONE, &[], &[], widths)
+            } else {
+                let inner = inner.as_ref().clone();
+                write_variant(
+                    buf,
+                    OPTION_SOME,
+                    std::slice::from_ref(obj),
+                    &[inner],
+                    widths,
+                )
+            }
+        }
+        Ty::OutOnly { .. } => to_value(obj, ty).map(|_| ()),
+    }
+}
+
+/// Write an enum body, the discriminant as a word and then the payload fields in
+/// order, the layout the reader's `payload` expects.
+fn write_variant(
+    buf: &mut [u8],
+    disc: i64,
+    payload: &[Bound<'_, PyAny>],
+    types: &[Ty],
+    widths: Widths,
+) -> PyResult<()> {
+    write_scalar(buf, &Value::Int(disc), widths)?;
+    let mut offset = widths.word_bytes;
+    for (item, field_ty) in payload.iter().zip(types) {
+        let size = widths.size_of(&field_ty.layout());
+        let slot = offset
+            .checked_add(size)
+            .and_then(|end| buf.get_mut(offset..end))
+            .ok_or_else(|| mismatch(field_ty, "a payload past the end of its enum"))?;
+        write_flat(slot, item, field_ty, widths)?;
+        offset += size;
+    }
+    Ok(())
+}
+
+/// Write a scalar value at the start of `buf`. Only the scalar variants reach
+/// Keleusma's `write_scalar_le`, which panics on any other.
+fn write_scalar(buf: &mut [u8], value: &Value, widths: Widths) -> PyResult<()> {
+    match value {
+        Value::Unit
+        | Value::Bool(_)
+        | Value::Byte(_)
+        | Value::Int(_)
+        | Value::Fixed(_)
+        | Value::Float(_) => value
+            .write_scalar_le(buf, 0, widths.word_bytes, widths.float_bytes)
+            .map_err(|e| VMError::new_err(format!("{e:?}"))),
+        other => Err(VMError::new_err(format!(
+            "{} is not a scalar a data block can hold",
+            kind_name(other)
+        ))),
+    }
 }
 
 /// What reading a value out needs from the VM that produced it.
 pub struct ReadContext<'a> {
     pub arena: &'a Arena,
     pub widths: Widths,
+    /// Resolves an index into the VM's registry of opaque values, which a flat
+    /// composite's opaque field holds. `None` for an index the registry lacks.
+    pub opaque: &'a dyn Fn(usize) -> Option<Arc<dyn HostOpaque>>,
 }
 
 fn mismatch(ty: &Ty, found: &str) -> PyErr {
@@ -282,6 +456,11 @@ pub fn to_py<'py>(
         (Ty::Float, Value::Float(f)) => f.into_bound_py_any(py),
         (Ty::Text, Value::StaticStr(s)) => s.into_bound_py_any(py),
         (Ty::Text, Value::KStr(k)) => k.get(ctx.arena).map_err(|_| stale())?.into_bound_py_any(py),
+        (Ty::Opaque(_), Value::Opaque(value)) => crate::opaque::to_py(py, value),
+        (Ty::Multiword { words, frac_bits }, value) => {
+            let list = to_py(py, value, &multiword_words(*words), ctx)?;
+            from_words(py, &list, *frac_bits)
+        }
         (Ty::Tuple(types), Value::Tuple(TupleBody::Boxed(items))) => {
             if items.len() != types.len() {
                 return Err(mismatch(ty, &format!("a tuple of length {}", items.len())));
@@ -337,7 +516,7 @@ pub fn to_py<'py>(
                 .collect::<PyResult<Vec<_>>>()?;
             make_variant(py, &variant.name, values)
         }
-        (Ty::Refined { inner, .. }, value) => to_py(py, value, inner, ctx),
+        (Ty::OutOnly { inner, .. }, value) => to_py(py, value, inner, ctx),
         (Ty::Option(_), Value::None) => Ok(py.None().into_bound(py)),
         (Ty::Option(inner), Value::Enum(EnumBody::Boxed(boxed))) if boxed.type_name == "Option" => {
             match (boxed.variant.as_str(), boxed.fields.as_slice()) {
@@ -366,6 +545,17 @@ fn flat_body<'py>(
     read_flat(py, bytes, ty, ctx, body.ref_epoch())
 }
 
+/// Read a value of type `ty` from exactly its flat bytes, outside any composite the
+/// VM produced, such as the shared `data` block, which holds no arena references.
+pub fn read_flat_value<'py>(
+    py: Python<'py>,
+    bytes: &[u8],
+    ty: &Ty,
+    ctx: &ReadContext<'_>,
+) -> PyResult<Bound<'py, PyAny>> {
+    read_flat(py, bytes, ty, ctx, ctx.arena.epoch())
+}
+
 /// Read a value of type `ty` from exactly its flat bytes.
 fn read_flat<'py>(
     py: Python<'py>,
@@ -377,9 +567,10 @@ fn read_flat<'py>(
     let Widths {
         word_bytes,
         float_bytes,
+        ..
     } = ctx.widths;
     let layout = ty.layout();
-    let expected = layout.size_in_bytes(word_bytes, float_bytes);
+    let expected = ctx.widths.size_of(&layout);
     if bytes.len() != expected {
         return Err(mismatch(
             ty,
@@ -387,21 +578,34 @@ fn read_flat<'py>(
         ));
     }
     match ty {
-        Ty::Text => {
-            let refs = RefContext {
-                arena: ctx.arena,
-                opaques: &[],
-                word_bytes,
-                float_bytes,
-                ref_epoch: epoch,
-            };
-            let text = <String as KeleusmaType<i64, f64>>::from_flat_bytes_ctx(
+        Ty::Multiword { words, frac_bits } => {
+            let list = read_flat(py, bytes, &multiword_words(*words), ctx, epoch)?;
+            from_words(py, &list, *frac_bits)
+        }
+        Ty::Opaque(name) => {
+            let index = Value::read_scalar_le(
                 bytes,
+                0,
+                keleusma::value_layout::ScalarKind::Int,
                 word_bytes,
                 float_bytes,
-                &refs,
             )
-            .map_err(|e| VMError::new_err(format!("{e:?}")))?;
+            .ok()
+            .and_then(|v| match v {
+                Value::Int(i) => usize::try_from(i).ok(),
+                _ => None,
+            });
+            let value = index.and_then(|i| (ctx.opaque)(i)).ok_or_else(|| {
+                VMError::new_err(format!(
+                    "an opaque `{name}` field of a flat composite does not resolve, which a \
+                     well-formed value never produces"
+                ))
+            })?;
+            crate::opaque::to_py(py, &value)
+        }
+        Ty::Text => {
+            let text = crate::compat::read_flat_text(bytes, ctx.widths, ctx.arena, epoch)
+                .map_err(|e| VMError::new_err(format!("{e:?}")))?;
             text.into_bound_py_any(py)
         }
         Ty::Tuple(types) => {
@@ -419,7 +623,7 @@ fn read_flat<'py>(
             )?;
             Ok(PyList::new(py, items)?.into_any())
         }
-        Ty::Refined { inner, .. } => read_flat(py, bytes, inner, ctx, epoch),
+        Ty::OutOnly { inner, .. } => read_flat(py, bytes, inner, ctx, epoch),
         Ty::Struct {
             fields: declared, ..
         } => {
@@ -494,15 +698,11 @@ fn payload<'py>(
     ctx: &ReadContext<'_>,
     epoch: u64,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let Widths {
-        word_bytes,
-        float_bytes,
-    } = ctx.widths;
-    let mut offset = word_bytes;
+    let mut offset = ctx.widths.word_bytes;
     types
         .iter()
         .map(|field| {
-            let size = field.layout().size_in_bytes(word_bytes, float_bytes);
+            let size = ctx.widths.size_of(&field.layout());
             let slice = offset
                 .checked_add(size)
                 .and_then(|end| bytes.get(offset..end))
@@ -511,6 +711,22 @@ fn payload<'py>(
             read_flat(py, slice, field, ctx, epoch)
         })
         .collect()
+}
+
+/// The `[Word; N]` a multiword is laid out as, which its words are read as.
+fn multiword_words(words: usize) -> Ty {
+    Ty::Array(Box::new(Ty::Word), words)
+}
+
+/// The Python number a multiword's words represent, by `keleusma._multiword`.
+fn from_words<'py>(
+    py: Python<'py>,
+    words: &Bound<'py, PyAny>,
+    frac_bits: u32,
+) -> PyResult<Bound<'py, PyAny>> {
+    py.import("keleusma._multiword")?
+        .getattr("from_words")?
+        .call1((words, frac_bits))
 }
 
 fn make_variant<'py>(
@@ -532,17 +748,14 @@ fn fields<'a, 'py>(
     ctx: &ReadContext<'_>,
     epoch: u64,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let Widths {
-        word_bytes,
-        float_bytes,
-    } = ctx.widths;
     types
         .enumerate()
         .map(|(index, field)| {
-            let offset = layout
-                .field_offset(index, word_bytes, float_bytes)
+            let offset = ctx
+                .widths
+                .offset_of(layout, index)
                 .ok_or_else(|| mismatch(field, "a field outside its composite"))?;
-            let size = field.layout().size_in_bytes(word_bytes, float_bytes);
+            let size = ctx.widths.size_of(&field.layout());
             let slice = offset
                 .checked_add(size)
                 .and_then(|end| bytes.get(offset..end))
@@ -569,6 +782,8 @@ pub fn to_py_untyped<'py>(
         Value::Float(f) => f.into_bound_py_any(py),
         Value::StaticStr(s) => s.into_bound_py_any(py),
         Value::KStr(k) => k.get(ctx.arena).map_err(|_| stale())?.into_bound_py_any(py),
+        // An opaque value carries its own type name, so it needs no declaration.
+        Value::Opaque(value) => crate::opaque::to_py(py, value),
         other => Err(PyTypeError::new_err(format!(
             "{} needs a declared type to convert, which {UNTYPED_HINT}",
             kind_name(other)

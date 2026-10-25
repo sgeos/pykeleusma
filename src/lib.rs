@@ -6,11 +6,14 @@
 //! class, in [`vm`], and task 4, value conversion by declared type, in [`convert`] and
 //! [`types`], and task 7, Python natives, in [`natives`].
 
+mod canaries;
+mod compat;
 mod compile;
 mod convert;
 mod crypto;
 mod libraries;
 mod natives;
+mod opaque;
 mod owned_vm;
 mod types;
 mod vm;
@@ -60,6 +63,10 @@ fn _keleusma(module: &Bound<'_, PyModule>) -> PyResult<()> {
     // runtime that is actually in the wheel.
     module.add("BYTECODE_VERSION", keleusma::bytecode::BYTECODE_VERSION)?;
     module.add("DEFAULT_ARGUMENT_BYTES", DEFAULT_ARGUMENT_BYTES)?;
+    module.add(
+        "OP_NAMES",
+        pyo3::types::PyTuple::new(module.py(), compat::OP_NAMES)?,
+    )?;
     module.add_class::<compile::Module>()?;
     module.add_function(wrap_pyfunction!(compile::compile, module)?)?;
     module.add_function(wrap_pyfunction!(compile::load_module, module)?)?;

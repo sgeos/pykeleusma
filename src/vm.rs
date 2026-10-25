@@ -41,14 +41,14 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use keleusma::bytecode::BlockType;
+use keleusma::bytecode::{BlockType, Value};
 use keleusma::vm::{DEFAULT_NATIVE_WCET, DEFAULT_NATIVE_WCMU_BYTES, VmError, VmState};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{
     PyKeyError, PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyMapping, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
 
 use crate::compile::{Boundary, Module, SignedImage};
@@ -90,6 +90,24 @@ fn construction_error(error: OwnedVmError) -> PyErr {
 /// to after.
 ///
 /// Checked here so that an unsuitable buffer is refused before the VM runs.
+/// A contiguous byte buffer of `size` bytes to read a shared block from, which,
+/// unlike one to write to, may be read-only.
+fn readable_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>> {
+    let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
+        PyTypeError::new_err("`buffer` must support the buffer protocol with byte items")
+    })?;
+    if !buffer.is_c_contiguous() {
+        return Err(PyValueError::new_err("`buffer` must be contiguous"));
+    }
+    if buffer.item_count() != size {
+        return Err(PyValueError::new_err(format!(
+            "`buffer` has {} bytes, but the module's shared `data` block has {size}",
+            buffer.item_count()
+        )));
+    }
+    Ok(buffer)
+}
+
 fn host_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>> {
     let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
         PyTypeError::new_err(
@@ -112,6 +130,205 @@ fn host_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>>
         )));
     }
     Ok(buffer)
+}
+
+/// The shared `data` block's declared type, checked against Keleusma's own layout
+/// table, or why the binding cannot convert the block by its fields.
+///
+/// The binding lays the block out from the declared field types, as a packed struct.
+/// Keleusma records each shared slot's offset when it compiles the module, so every
+/// offset is compared with the binding's, and any difference refuses typed access
+/// rather than reading a field at the wrong place.
+fn shared_type(module: &Module) -> Result<Ty, String> {
+    let declared = match &module.boundary().shared {
+        None => {
+            return Err(
+                "the module declares no shared `data` block, or was loaded from bytes, \
+                 which carry no declarations"
+                    .to_string(),
+            );
+        }
+        Some(Err(unsupported)) => {
+            return Err(format!("the shared block has {}", unsupported.0));
+        }
+        Some(Ok(ty)) => ty.clone(),
+    };
+    let widths = module.boundary().widths;
+    let layout = declared.layout();
+    let Some(data) = module.inner().data_layout.as_ref() else {
+        return Err("Keleusma records no data layout for the module".to_string());
+    };
+    let Ty::Struct {
+        name: block,
+        fields,
+    } = &declared
+    else {
+        return Err("the shared block is not a struct of fields".to_string());
+    };
+    // Keleusma names each shared slot `block.field`, and expands an array field into
+    // one slot per element, `block.field[i]`. Each recorded offset must equal the
+    // offset the binding computes for that name.
+    let shared_slots = data
+        .slots
+        .iter()
+        .filter(|slot| matches!(slot.visibility, keleusma::bytecode::SlotVisibility::Shared));
+    let mut checked = 0usize;
+    for (slot, recorded) in shared_slots.zip(&data.shared_layout) {
+        let expected = slot
+            .name
+            .strip_prefix(block.as_str())
+            .and_then(|rest| rest.strip_prefix('.'))
+            .and_then(|rest| shared_slot_offset(rest, fields, &layout, widths));
+        if expected != crate::compat::shared_slot_offset(recorded) {
+            return Err(format!(
+                "the slot `{}` lies at offset {} in Keleusma's layout, not {expected:?}",
+                slot.name, recorded.offset
+            ));
+        }
+        checked += 1;
+    }
+    if checked != data.shared_layout.len() || checked == 0 {
+        return Err(format!(
+            "Keleusma records {} shared slot(s), of which {checked} were matched",
+            data.shared_layout.len()
+        ));
+    }
+    Ok(declared)
+}
+
+/// The new module's private slot values for a hot swap: the field values `private`
+/// names, converted by the module's declared private fields, and `()` for every slot
+/// it does not name, the state a fresh VM starts in.
+///
+/// Keleusma lists one private slot per field, and one per element of an array field,
+/// named `block.field` or `block.field[i]`, and takes the values in that order.
+fn private_values(module: &Module, private: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Value>> {
+    let fresh = OwnedVm::fresh_private_data(module.inner());
+    let Some(private) = private else {
+        return Ok(fresh);
+    };
+    let values = private
+        .cast::<PyMapping>()
+        .map_err(|_| PyTypeError::new_err("`private` must be a mapping of field names"))?;
+    let Some(Ok(Ty::Struct {
+        name: block,
+        fields,
+    })) = &module.boundary().private
+    else {
+        return Err(PyTypeError::new_err(
+            "`private` needs a module compiled from source that declares a private `data` \
+             block with fields of supported types",
+        ));
+    };
+    for key in values.keys()?.iter() {
+        let key: String = key.extract()?;
+        if !fields.iter().any(|(n, _)| *n == key) {
+            let known: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+            return Err(PyKeyError::new_err(format!(
+                "the private block `{block}` has no field `{key}`; its fields are {}",
+                known.join(", ")
+            )));
+        }
+    }
+    let slots = module
+        .inner()
+        .data_layout
+        .as_ref()
+        .map(|d| d.slots.clone())
+        .unwrap_or_default();
+    let private_slots = slots
+        .iter()
+        .filter(|slot| matches!(slot.visibility, keleusma::bytecode::SlotVisibility::Private));
+    let mut initial = Vec::with_capacity(fresh.len());
+    for slot in private_slots {
+        let rest = slot
+            .name
+            .strip_prefix(block.as_str())
+            .and_then(|rest| rest.strip_prefix('.'))
+            .ok_or_else(|| VMError::new_err(format!("an unexpected slot `{}`", slot.name)))?;
+        let (field, element) = match rest.split_once('[') {
+            Some((field, index)) => {
+                let index = index
+                    .strip_suffix(']')
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .ok_or_else(|| VMError::new_err(format!("an unexpected slot `{rest}`")))?;
+                (field, Some(index))
+            }
+            None => (rest, None),
+        };
+        let field_ty = fields
+            .iter()
+            .find(|(n, _)| n == field)
+            .map(|(_, t)| t)
+            .ok_or_else(|| VMError::new_err(format!("an undeclared slot `{}`", slot.name)))?;
+        let value = match values.get_item(field) {
+            Err(_) => Value::Unit,
+            Ok(object) => match (element, field_ty) {
+                (None, ty) if is_scalar(ty) => to_value(&object, ty)?,
+                (None, ty) => {
+                    return Err(PyTypeError::new_err(format!(
+                        "the private field `{field}` is {}, a composite; Keleusma 0.2.2 \
+                         clears the composite body pool after seeding the slots, so only \
+                         scalar fields and arrays of scalars can be seeded at a swap",
+                        ty.name()
+                    )));
+                }
+                (Some(i), Ty::Array(element_ty, count)) if is_scalar(element_ty) => {
+                    let items: Vec<Bound<'_, PyAny>> =
+                        object.try_iter()?.collect::<PyResult<_>>()?;
+                    if items.len() != *count {
+                        return Err(PyTypeError::new_err(format!(
+                            "expected {}, got a sequence of length {}",
+                            field_ty.name(),
+                            items.len()
+                        )));
+                    }
+                    to_value(&items[i], element_ty)?
+                }
+                _ => return Err(VMError::new_err(format!("an unexpected slot `{rest}`"))),
+            },
+        };
+        initial.push(value);
+    }
+    if initial.len() != fresh.len() {
+        return Err(VMError::new_err(format!(
+            "{} private slot value(s) for {} slot(s)",
+            initial.len(),
+            fresh.len()
+        )));
+    }
+    Ok(initial)
+}
+
+/// Whether a value of `ty` occupies a private slot directly, as a scalar.
+fn is_scalar(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Unit | Ty::Bool | Ty::Byte | Ty::Word | Ty::Fixed(_) | Ty::Float
+    )
+}
+
+/// The binding's offset for the shared slot named `field` or `field[i]` within the
+/// block, or `None` for a name it cannot place.
+fn shared_slot_offset(
+    name: &str,
+    fields: &[(String, Ty)],
+    layout: &keleusma::value_layout::LayoutDescriptor,
+    widths: crate::convert::Widths,
+) -> Option<usize> {
+    let (field, element) = match name.split_once('[') {
+        Some((field, rest)) => (field, Some(rest.strip_suffix(']')?.parse::<usize>().ok()?)),
+        None => (name, None),
+    };
+    let index = fields.iter().position(|(n, _)| n == field)?;
+    let base = widths.offset_of(layout, index)?;
+    match (element, &fields[index].1) {
+        (None, _) => Some(base),
+        (Some(i), Ty::Array(element_ty, count)) if i < *count => {
+            base.checked_add(i.checked_mul(widths.size_of(&element_ty.layout()))?)
+        }
+        _ => None,
+    }
 }
 
 /// Refuse a module whose declaration of a library native differs from the library's.
@@ -229,6 +446,11 @@ pub struct VM {
     libraries: Vec<Library>,
     /// Whether the VM is suspended at a yield, where a hot swap is not allowed.
     suspended: bool,
+    /// The shared block's declared type, or why it cannot be converted by fields.
+    shared_type: Result<Ty, String>,
+    /// The running module, which a cost-model analysis reads, since Keleusma keeps
+    /// its own copy private.
+    module: keleusma::bytecode::Module,
 }
 
 #[pymethods]
@@ -314,12 +536,17 @@ impl VM {
             // loader, which verifies the signature again and keeps the keys as the
             // VM's trust matrix.
             Some(SignedImage {
-                bytes: Some(bytes),
+                bytes,
+                encrypted: false,
                 keys,
             }) => OwnedVm::new_signed(module.inner(), bytes, keys, argument_bytes, &native_wcmu),
             // A decrypted module was verified while decrypting. It is built normally
             // and its keys become the trust matrix, as in Keleusma's encrypted loader.
-            Some(SignedImage { bytes: None, keys }) => {
+            Some(SignedImage {
+                encrypted: true,
+                keys,
+                ..
+            }) => {
                 OwnedVm::new(module.inner().clone(), argument_bytes, &native_wcmu).map(|mut vm| {
                     for key in keys {
                         vm.register_verifying_key(*key);
@@ -371,9 +598,13 @@ impl VM {
         vm.verify_resources().map_err(|e| vm_error(&e))?;
         // Zeroed, so a script reads defined bytes before the host writes any.
         let shared = vec![0u8; vm.shared_data_bytes()];
+        let shared_type = shared_type(&module);
+        let analysed = module.inner().clone();
         Ok(Self {
+            module: analysed,
             vm,
             boundary,
+            shared_type,
             failed: false,
             has_stream,
             registry,
@@ -445,7 +676,12 @@ impl VM {
     /// After the swap the new module is driven from `call`. Its private data starts as
     /// `()`, as in a fresh VM. Native registrations persist, and a native the new module
     /// names that is not yet registered must be registered before the next call.
-    fn replace_module(&mut self, module: PyRef<'_, Module>) -> PyResult<()> {
+    #[pyo3(signature = (module, *, private = None))]
+    fn replace_module(
+        &mut self,
+        module: PyRef<'_, Module>,
+        private: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
         if self.suspended {
             return Err(VMError::new_err(
                 "a hot swap is allowed only at an iteration boundary, after `Reset` or \
@@ -489,24 +725,20 @@ impl VM {
                 })
                 .collect()
         };
+        // Converted before anything changes, so a refused value leaves the old module.
+        let initial = private_values(&module, private)?;
         match module.signed() {
             // Signed bytes are verified against this VM's trust matrix, the keys it
-            // was built with and those added by `register_verifying_key`.
-            Some(SignedImage {
-                bytes: Some(bytes), ..
-            }) => self
-                .vm
-                .replace_module_signed(module.inner(), bytes, &native_wcmu),
-            // A decrypted module has no signed bytes left to check against this VM's
-            // trust matrix, so swapping it in would bypass that matrix.
-            Some(SignedImage { bytes: None, .. }) => {
-                return Err(VerifyError::new_err(
-                    "an encrypted module cannot be hot-swapped, because its signature \
-                     covers the encrypted form and cannot be checked against this VM's \
-                     trust matrix after decryption; build a new VM from it instead",
-                ));
+            // was built with and those added by `register_verifying_key`. For an
+            // encrypted module the signature covers the encrypted bytes, which were
+            // kept for this check, so no decryption key is needed again.
+            Some(SignedImage { bytes, .. }) => {
+                self.vm
+                    .replace_module_signed(module.inner(), bytes, &native_wcmu, initial)
             }
-            None => self.vm.replace_module(module.inner().clone(), &native_wcmu),
+            None => self
+                .vm
+                .replace_module(module.inner().clone(), &native_wcmu, initial),
         }
         .map_err(|e| match e {
             // Keleusma's message points to its unchecked swap, which the binding does
@@ -572,6 +804,8 @@ impl VM {
         if self.shared.len() != size {
             self.shared = vec![0u8; size];
         }
+        self.shared_type = shared_type(&module);
+        self.module = module.inner().clone();
         self.boundary = boundary;
         self.failed = false;
         // The arena was checked against the new module above, so this confirms it with
@@ -649,8 +883,9 @@ impl VM {
     /// cycles, or `None` for a module without a stream.
     ///
     /// Nominal cycles are the per-instruction costs of Keleusma's nominal cost model,
-    /// not the cycles of any particular processor, and not seconds. The figure covers the script and the declared bounds of any
-    /// natives, never Python or the binding's own conversions.
+    /// not the cycles of any particular processor, and not seconds. The figure covers
+    /// the script and the declared bounds of any natives, never Python or the
+    /// binding's own conversions.
     #[getter]
     fn wcet_per_iteration(&self) -> PyResult<Option<u32>> {
         // Keleusma reports zero for a module with no stream chunk, which would read as
@@ -662,6 +897,79 @@ impl VM {
             .wcet_per_iteration()
             .map(Some)
             .map_err(|e| vm_error(&e))
+    }
+
+    /// The worst-case execution time of one iteration of a `loop main` under a cost
+    /// model of the host's, or `None` for a module without a stream.
+    ///
+    /// `op_cycles` maps opcode names, the names in `keleusma.OP_NAMES`, to a cost per
+    /// execution, and every opcode it does not name keeps its nominal cost.
+    /// `text_byte_cycles` is the cost per byte of text work, nominal if omitted. This
+    /// is how a host applies a calibrated or measured model, such as one generated by
+    /// Keleusma's benchmark crate for a particular processor, in that model's units.
+    /// The native bounds are the declared ones, as for `wcet_per_iteration`.
+    #[pyo3(signature = (op_cycles, *, text_byte_cycles = None))]
+    fn wcet_per_iteration_with(
+        &self,
+        op_cycles: BTreeMap<String, u32>,
+        text_byte_cycles: Option<u32>,
+    ) -> PyResult<Option<u32>> {
+        if let Some(unknown) = op_cycles
+            .keys()
+            .find(|name| !crate::compat::OP_NAMES.contains(&name.as_str()))
+        {
+            return Err(PyValueError::new_err(format!(
+                "`{unknown}` is not a Keleusma opcode; the names are in keleusma.OP_NAMES"
+            )));
+        }
+        if !self.has_stream {
+            return Ok(None);
+        }
+        // The declared bounds of each native, in the order the module names them,
+        // which is the order Keleusma's analysis indexes them by.
+        let bounds: Vec<keleusma::verify::NativeIterationBound> = {
+            let registry = self.registry.borrow();
+            self.module
+                .native_names
+                .iter()
+                .map(|name| {
+                    let slot = registry.get(name);
+                    keleusma::verify::NativeIterationBound {
+                        per_call_wcmu_bytes: slot
+                            .map_or(DEFAULT_NATIVE_WCMU_BYTES, |s| s.wcmu_bytes),
+                        per_call_wcet_cycles: slot.map_or(DEFAULT_NATIVE_WCET, |s| s.wcet),
+                        max_invocations: None,
+                    }
+                })
+                .collect()
+        };
+        let stream_wcet = |table: BTreeMap<String, u32>, text: Option<u32>| {
+            crate::compat::with_cost_table(table, text, |model| {
+                keleusma::verify::module_wcet_with_bounds(&self.module, &bounds, model)
+            })
+            .map(|per_chunk| {
+                self.module
+                    .chunks
+                    .iter()
+                    .zip(per_chunk)
+                    .filter(|(chunk, _)| chunk.block_type == BlockType::Stream)
+                    .map(|(_, wcet)| wcet)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .map_err(|e| VerifyError::new_err(format!("{}: {}", e.chunk_name, e.message)))
+        };
+        // The nominal model through this path must give Keleusma's own figure, or the
+        // bounds were assembled differently from Keleusma's and the result is refused.
+        let nominal = stream_wcet(BTreeMap::new(), None)?;
+        let reference = self.vm.wcet_per_iteration().map_err(|e| vm_error(&e))?;
+        if nominal != reference {
+            return Err(VMError::new_err(format!(
+                "the binding's nominal figure {nominal} differs from Keleusma's {reference}, \
+                 so a custom cost model cannot be applied faithfully"
+            )));
+        }
+        stream_wcet(op_cycles, text_byte_cycles).map(Some)
     }
 
     /// The bytes of the arena reserved for composite arguments.
@@ -764,6 +1072,88 @@ impl VM {
         PyBytes::new(py, &self.shared)
     }
 
+    /// The shared `data` block's fields as a `dict`, converted by their declared
+    /// types, read from the VM's own block or from `buffer`, a block-sized buffer.
+    #[pyo3(signature = (buffer = None))]
+    fn read_shared<'py>(
+        &self,
+        py: Python<'py>,
+        buffer: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ty = self.typed_shared()?;
+        let bytes = match buffer {
+            Some(object) => {
+                let buffer = readable_buffer(object, self.shared.len())?;
+                buffer.to_vec(py)?
+            }
+            None => self.shared.clone(),
+        };
+        let none = |_: usize| None;
+        let ctx = ReadContext {
+            arena: self.vm.arena(),
+            widths: self.boundary.widths,
+            opaque: &none,
+        };
+        crate::convert::read_flat_value(py, &bytes, ty, &ctx)
+    }
+
+    /// Write the fields named in `values` into the shared `data` block, converting
+    /// each by its declared type, in the VM's own block or in `buffer`, a writable
+    /// block-sized buffer. Fields not named keep their bytes. Every value is
+    /// converted before any byte is written, so a refused value changes nothing.
+    #[pyo3(signature = (values, buffer = None))]
+    fn write_shared(
+        &mut self,
+        values: &Bound<'_, PyAny>,
+        buffer: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let py = values.py();
+        let ty = self.typed_shared()?.clone();
+        let Ty::Struct { name, fields } = &ty else {
+            return Err(VMError::new_err(
+                "the shared block is not a struct of fields",
+            ));
+        };
+        let values = values
+            .cast::<PyMapping>()
+            .map_err(|_| PyTypeError::new_err("`values` must be a mapping of field names"))?;
+        let host = buffer
+            .map(|object| host_buffer(object, self.shared.len()))
+            .transpose()?;
+        let mut bytes = match &host {
+            Some(buffer) => buffer.to_vec(py)?,
+            None => self.shared.clone(),
+        };
+        let widths = self.boundary.widths;
+        let layout = ty.layout();
+        for item in values.items()?.iter() {
+            let (key, value): (String, Bound<'_, PyAny>) = item.extract()?;
+            let index = fields.iter().position(|(n, _)| *n == key).ok_or_else(|| {
+                let known: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                PyKeyError::new_err(format!(
+                    "the shared block `{name}` has no field `{key}`; its fields are {}",
+                    known.join(", ")
+                ))
+            })?;
+            let field_ty = &fields[index].1;
+            let offset = widths
+                .offset_of(&layout, index)
+                .ok_or_else(|| VMError::new_err("a shared field outside its block"))?;
+            let end = offset + widths.size_of(&field_ty.layout());
+            let slot = bytes
+                .get_mut(offset..end)
+                .ok_or_else(|| VMError::new_err("a shared field past the end of its block"))?;
+            crate::convert::write_flat(slot, &value, field_ty, widths)?;
+        }
+        match host {
+            Some(buffer) => buffer.copy_from_slice(py, &bytes),
+            None => {
+                self.shared = bytes;
+                Ok(())
+            }
+        }
+    }
+
     /// Drive the VM through Python's generator protocol, yielding each `Yielded` and
     /// `Reset` and returning the `Finished` value. Resume inputs come from `inputs`
     /// or from `send`. The semantics, including the meaning of `Reset`, are
@@ -829,6 +1219,13 @@ impl VM {
         let buffer = host_buffer(object, self.shared.len())?;
         buffer.copy_to_slice(object.py(), &mut self.shared)?;
         Ok(Some(buffer))
+    }
+
+    /// The shared block's declared type, or the reason it cannot be converted.
+    fn typed_shared(&self) -> PyResult<&Ty> {
+        self.shared_type
+            .as_ref()
+            .map_err(|why| PyTypeError::new_err(format!("no typed shared access: {why}")))
     }
 
     /// Copy the VM's shared block back to the Python buffer it was synced from.
@@ -911,9 +1308,11 @@ impl VM {
                 ));
             }
         };
+        let resolve = |i: usize| self.vm.resolve_opaque(i);
         let ctx = ReadContext {
             arena: self.vm.arena(),
             widths: self.boundary.widths,
+            opaque: &resolve,
         };
         let converted = match &self.boundary.signature {
             Some(signature) => to_py(py, &value, declared(&signature.ret, "the result")?, &ctx)?,

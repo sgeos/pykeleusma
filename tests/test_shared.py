@@ -186,3 +186,94 @@ def test_the_flush_overwrites_what_python_wrote_during_the_call() -> None:
     vm = keleusma.VM(module, natives={"host::scribble": scribble})
     assert vm.call(42, shared=buffer) == keleusma.Finished(42)
     assert struct.unpack("<q", buffer) == (42,)
+
+
+# Typed access, by the block's declared field types. The binding checks its layout
+# against the offsets Keleusma records, so these round trips also check the layout.
+
+RICH = keleusma.compile(
+    "enum Mode { Idle, Run(Word) }\n"
+    "data st { n: Word, p: (Word, bool), b: Byte, f: Fixed<8>, o: Option<Word>, "
+    "e: [Word; 2], m: Mode }\n"
+    "loop main(x: Word) -> Word { st.n = st.n + x; let r = yield st.n; r }"
+)
+
+
+def test_a_fresh_block_reads_as_zeroed_fields() -> None:
+    assert keleusma.VM(RICH).read_shared() == {
+        "n": 0,
+        "p": (0, False),
+        "b": 0,
+        "f": keleusma.Fixed(0, 8),
+        "o": None,
+        "e": [0, 0],
+        "m": keleusma.Variant("Idle"),
+    }
+
+
+def test_written_fields_read_back_and_reach_the_script() -> None:
+    vm = keleusma.VM(RICH)
+    values: dict[str, object] = {
+        "n": 100,
+        "p": (7, True),
+        "b": 255,
+        "f": keleusma.Fixed.from_value(1.5, 8),
+        "o": 9,
+        "e": [3, 4],
+        "m": keleusma.Variant("Run", (2,)),
+    }
+    vm.write_shared(values)
+    assert vm.read_shared() == values
+    assert vm.call(5) == keleusma.Yielded(105)
+    assert vm.read_shared()["n"] == 105
+
+
+def test_the_script_reads_an_enum_the_host_wrote() -> None:
+    module = keleusma.compile(
+        "enum S { A(Word), B }\ndata st { s: S }\n"
+        "fn main() -> Word { match st.s { S::A(v) => v, S::B => 0 - 1 } }"
+    )
+    vm = keleusma.VM(module)
+    vm.write_shared({"s": keleusma.Variant("A", (11,))})
+    assert vm.call() == keleusma.Finished(11)
+    vm.write_shared({"s": "B"})
+    assert vm.call() == keleusma.Finished(-1)
+
+
+def test_unnamed_fields_keep_their_bytes() -> None:
+    vm = keleusma.VM(RICH)
+    vm.write_shared({"n": 1, "b": 2})
+    vm.write_shared({"n": 3})
+    assert vm.read_shared()["b"] == 2
+
+
+def test_a_refused_value_changes_nothing() -> None:
+    vm = keleusma.VM(RICH)
+    vm.write_shared({"n": 7})
+    before = vm.shared_data
+    with pytest.raises(OverflowError):
+        vm.write_shared({"n": 1, "b": 300})
+    assert vm.shared_data == before
+
+
+def test_an_unknown_field_is_refused() -> None:
+    with pytest.raises(KeyError, match="has no field `zz`"):
+        keleusma.VM(RICH).write_shared({"zz": 1})
+
+
+def test_a_host_buffer_is_read_and_written() -> None:
+    vm = keleusma.VM(RICH)
+    buffer = bytearray(vm.shared_data_bytes)
+    vm.write_shared({"n": 42}, buffer=buffer)
+    assert vm.read_shared(buffer=bytes(buffer))["n"] == 42
+    assert vm.read_shared()["n"] == 0  # The VM's own block is untouched.
+    assert vm.call(1, shared=buffer) == keleusma.Yielded(43)
+
+
+def test_typed_access_needs_declarations() -> None:
+    plain = keleusma.VM(keleusma.compile("fn main() -> Word { 1 }"))
+    with pytest.raises(TypeError, match="no typed shared access"):
+        plain.read_shared()
+    loaded = keleusma.VM(keleusma.load_module(COUNTER.to_bytes()))
+    with pytest.raises(TypeError, match="loaded from bytes"):
+        loaded.write_shared({"n": 1})

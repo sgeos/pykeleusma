@@ -4,29 +4,37 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, library declaration check, bytecode trust note, no co-author trailer
+## 2026-10-25, known issues, technical debt and readiness for 0.2.3, task 13
 
-**Goal.** Add the library signature check and the bytecode trust note, remove the
-co-authored note, and stay on Keleusma 0.2.2.
+**Goal.** Address all known issues, pay off known technical debt, prepare the
+architecture for Keleusma 0.2.3, then commit, push and merge.
 
-**Library declarations.** A module whose declaration of a library-served native
-differs from the library's signature is refused, at construction and at a swap. A host
-callable for the native and a bare `use` line are not checked, for reasons the design
-records. The published signatures of all three libraries pass the check.
+**Resolved.** Opaque host values and `Multiword<N, F>` big numbers now convert.
+Typed shared data is available through `read_shared` and `write_shared`. A swap can
+seed scalar private fields, and an encrypted module can now be swapped in. Const-generic
+structs convert, and custom cost tables apply through `wcet_per_iteration_with`. The
+book survey is complete, Windows is tested, wheels are built and the version is 0.1.0.
 
-**A further binding defect, found while testing and fixed.** After a hot swap, a native
-served by a host callable kept converting by the first module's declaration. Every
-swap now rebuilds those closures. Both changes have tests that fail without them.
+**Defects found and fixed.**
+- **Fuzzing crash.** A crafted module crashed the process. The binding sized its
+  arena before Keleusma verified it, and Keleusma's footprint analysis then overflowed
+  the stack. The binding now verifies first, and 300,000 further cases found no crash.
+- **Stale closures.** A host native kept a stale declaration after a swap.
+- **Windows memory test.** The memory test could not run on Windows.
 
-**Bytecode trust.** The README, the design, the `load_module` docstring and the stub
-state that bytecode is code, that the checksum is not authentication, that Keleusma's
-decoder is not known to be robust against crafted bytes, and that a signature
-identifies a producer rather than making bytes safe. No fuzzing was done.
+**Corrected claims.**
+- **Cost models.** Keleusma 0.2.2 does have a cost model API. Only the nominal table
+  ships.
+- **Swap resource check.** Keleusma's swap does check resources, but more loosely than
+  construction.
 
-**Co-author trailer.** Removed from `CLAUDE.md` and omitted from this commit. Earlier
-commits keep theirs, because removing them would need a force-push.
+**Migration.** `docs/architecture/MIGRATION_V0_2_3.md`, `src/compat.rs`, the canaries
+and the `KELEUSMA-0.2.2` markers. The plan rests on a read-only survey, not on a build,
+so each item needs confirming against the published release.
 
-**Keleusma version.** Staying on 0.2.2, recorded in `HANDOFF.md`.
+**Blocked on Keleusma, requested.** These are `use external` natives, private value
+access, composite private seeding, type-generic instances, const-generic enum inputs
+and a `rodata` accessor.
 
-**Verification.** 334 Python tests and 30 Rust tests pass locally, with pyright, ruff,
+**Verification.** 379 Python tests and 41 Rust tests pass locally, with pyright, ruff,
 rustfmt and clippy clean.

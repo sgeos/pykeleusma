@@ -169,18 +169,24 @@ def test_a_vm_built_from_signed_code_trusts_its_keys() -> None:
     assert vm.call(4) == keleusma.Yielded(4)
 
 
-def test_an_encrypted_module_cannot_be_swapped_in() -> None:
+def test_an_encrypted_module_swaps_in_when_its_signer_is_trusted() -> None:
+    # The signature covers the encrypted bytes, which the module keeps, so the VM's
+    # trust matrix checks it at the swap without the decryption key.
     decryption_key = bytes(range(32, 64))
-    data = keleusma.compile("signed fn main(t: Word) -> Word { t }").to_signed_bytes(
+    data = keleusma.compile(
+        "signed loop main(t: Word) -> Word { let n = yield t + 1; n }"
+    ).to_signed_bytes(
         SEED, recipient_key=keleusma.encryption_public_key(decryption_key)
     )
     module = keleusma.load_module(
         data, verifying_keys=[PUBLIC], decryption_key=decryption_key
     )
     vm = keleusma.VM(TIMES_TEN)
-    vm.register_verifying_key(PUBLIC)
-    with pytest.raises(keleusma.VerifyError, match="encrypted module"):
+    with pytest.raises(keleusma.LoadError, match="did not verify"):
         vm.replace_module(module)
+    vm.register_verifying_key(PUBLIC)
+    vm.replace_module(module)
+    assert vm.call(1) == keleusma.Yielded(2)
 
 
 def test_a_malformed_verifying_key_is_refused() -> None:
@@ -207,3 +213,50 @@ def test_a_native_converts_by_the_swapped_modules_declaration() -> None:
     state = vm.call(1)
     assert state == keleusma.Finished(4.0)
     assert isinstance(state, keleusma.Finished) and isinstance(state.value, float)
+
+
+# Seeding the new module's private data, which Keleusma takes from the host at a swap.
+
+SEEDED = keleusma.compile(
+    "private data pv { q: Word, a: [Word; 2], t: (Word, bool) }\n"
+    "loop main(x: Word) -> Word "
+    "{ pv.q = pv.q + x; pv.t = (1, true); let r = yield pv.q + pv.a[1]; r }"
+)
+
+
+def test_a_swap_seeds_scalar_private_fields() -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"q": 10, "a": [1, 2]})
+    assert vm.call(1) == keleusma.Yielded(10 + 1 + 2)
+
+
+def test_a_field_not_named_starts_as_unit() -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"a": [1, 2]})
+    with pytest.raises(keleusma.VMError, match="Unit"):
+        vm.call(1)
+
+
+@pytest.mark.parametrize(
+    ("private", "error", "message"),
+    [
+        ({"t": (1, True)}, TypeError, "a composite"),
+        ({"zz": 1}, KeyError, "has no field `zz`"),
+        ({"a": [1]}, TypeError, "length 1"),
+        ({"q": "text"}, TypeError, "expected Word"),
+    ],
+)
+def test_a_refused_seed_keeps_the_old_module(
+    private: dict[str, object], error: type[Exception], message: str
+) -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"q": 0, "a": [0, 5]})
+    with pytest.raises(error, match=message):
+        vm.replace_module(SEEDED, private=private)
+    assert vm.call(1) == keleusma.Yielded(6)
+
+
+def test_seeding_needs_declarations() -> None:
+    loaded = keleusma.load_module(SEEDED.to_bytes())
+    with pytest.raises(TypeError, match="compiled from source"):
+        keleusma.VM(SEEDED).replace_module(loaded, private={"q": 1})
