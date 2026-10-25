@@ -4,34 +4,20 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, shared data kept in Rust
+## 2026-10-25, issues from other lines and tasks 1 to 11
 
-**Instruction.** The shared memory is kept in the Rust code. It syncs from Python, calls
-the VM, and then flushes to Python. Anything Python does in the meantime is a matter for
-the Python code, not for Keleusma.
+**Goal.** Attend to issues raised by other lines, complete all tasks from 1 to 11,
+skipping those already done, then commit, push and merge all work.
 
-**Done.** The VM owns its shared `data` block as a Rust vector for its whole life,
-zeroed at construction, and lends it to Keleusma on every call. A call given `shared=`
-syncs the block from that Python buffer, runs, and flushes the block back. Python's
-memory is never lent to Keleusma.
+**Issues from other lines.** None outstanding. The inbox was empty, and the last request,
+from `pydromon` about shared data, was answered and implemented in pull requests 12 and
+13, with a follow-up notice about the Rust-owned design.
 
-- **Changed.** A call without `shared=` used to raise `TypeError` for a module with a
-  block. It now runs on the VM's own copy, so state persists across calls even without
-  a Python buffer. `vm.shared_data` returns a copy of the block.
-- **Kept.** After a failed call the flush is skipped, so the Python buffer keeps its
-  pre-call contents, and the VM is failed. Flushing after a failure as well is a one-line
-  change if preferred.
+**Tasks.** All of tasks 1 to 11 were already done and merged. The only change is to
+roadmap task 11's title, which still described the shared block as lent rather than kept
+by the VM in Rust and synced with a host buffer, the design since pull request 13.
 
-**Verification.** 212 Python tests and 27 Rust tests passed locally. New tests cover
-persistence without a buffer, syncing over the VM's copy, and a native's write to the
-Python buffer being overwritten by the flush. A mutation that cleared the Rust copy
-between calls made the persistence test fail. `ruff`, `pyright`, `cargo fmt` and
-`cargo clippy` were clean.
+**Verification.** Documentation only. CI runs on the pull request.
 
-**Merged.** Through pull request 13, after CI passed on Linux and macOS with Python 3.12
-and 3.15 and under Miri. `pydromon` was told about the changed semantics in
-`pykeleusma-20261025-shared-data-update`.
-
-**Standing permission.** The operator granted standing permission on 2026-10-25 to
-commit, push and merge work through a pull request without asking each time. Publishing
-to PyPI, creating a remote and force-pushing still need confirmation in session.
+**Still open.** Three unanswered messages to `v0.2.3`, the empirical arena margin, the
+partial yield guard, and a PyPI release, which needs the operator's confirmation.
