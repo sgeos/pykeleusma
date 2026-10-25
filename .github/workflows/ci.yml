@@ -5,13 +5,33 @@
 # Actions are pinned to full commit hashes, with the release tag in a comment,
 # so that a moved or compromised tag cannot change what runs. The workflow only
 # reads the repository and holds no secrets.
+#
+# GitHub-hosted runners share one concurrent-job limit across the account, so a pull
+# request runs a reduced set. Linux with 3.12 and 3.15, Windows with 3.12, free-threaded
+# 3.14t and Miri, which have found the most defects here. A push to main, a manual run
+# and a pull request labelled `full-ci` add macOS, Windows with 3.15, Linux with 3.13
+# and 3.14, and FreeBSD, so a defect only they would find is caught on main. Changes to
+# documentation alone run nothing. README.md is not among them, because tests check it.
 
 name: CI
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - CHANGELOG.md
+      - CLAUDE.md
+      - AGENTS.md
+      - SECURITY.md
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - "docs/**"
+      - CHANGELOG.md
+      - CLAUDE.md
+      - AGENTS.md
+      - SECURITY.md
   workflow_dispatch:
 
 permissions:
@@ -32,14 +52,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # So that one push cannot hold every runner the account shares.
+      max-parallel: 3
+      # Each of the three expressions below is true for the full set, as the header
+      # describes, and false for an unlabelled pull request.
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
         # 3.12 is the stable-ABI floor in Cargo.toml, and 3.15 the newest release.
         python: ["3.12", "3.15"]
+        exclude: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[]' || '[{"os":"windows-latest", "python":"3.15"}]') }}
         # The versions between, which the package metadata also claims, on Linux.
-        include:
-          - { os: ubuntu-latest, python: "3.13" }
-          - { os: ubuntu-latest, python: "3.14" }
+        include: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest", "python":"3.13"}, {"os":"ubuntu-latest", "python":"3.14"}]' || '[]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -126,6 +149,7 @@ jobs:
     # from FreeBSD's packages, because PyPI has no FreeBSD wheel for it either, and
     # pygame is absent, so the frame-loop test skips.
     name: test (FreeBSD 15.1, source distribution)
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

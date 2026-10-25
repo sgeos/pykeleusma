@@ -10,9 +10,12 @@ completed, moved or abandoned.
 ## State on 2026-10-25
 
 - **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
-- **Continuous integration.** `ci.yml` covers Linux, macOS and Windows with Python
-  3.12 and 3.15, Linux also with 3.13, 3.14 and free-threaded 3.14t, every local check,
-  and Miri with Tree Borrows. `wheels.yml` builds 24 wheels on eight platforms, glibc
+- **Continuous integration.** On a push to `main` or a pull request labelled `full-ci`,
+  `ci.yml` covers Linux, macOS and Windows with Python 3.12 and 3.15, Linux also with
+  3.13, 3.14 and free-threaded 3.14t, FreeBSD from the source distribution, every local
+  check, and Miri with Tree Borrows. Other pull requests run Linux 3.12 and 3.15,
+  Windows 3.12, 3.14t and Miri, and one quick wheel, unless they touch packaging.
+  Documentation-only changes run nothing. `wheels.yml` builds 24 wheels on eight platforms, glibc
   and musl Linux, macOS and Windows on x86-64 and ARM64, each with a stable-ABI wheel
   and free-threaded 3.14t and 3.15t wheels, smoke-tests all but the free-threaded musl
   ones, builds the sdist,
@@ -38,7 +41,8 @@ completed, moved or abandoned.
 ## Standing permission
 
 Since 2026-10-25 the operator allows committing, pushing and merging through a pull
-request without asking each time, once CI passes with full test counts. Publishing to
+request without asking each time, once CI passes with full test counts. A pull request
+runs a reduced set, and the full set runs on `main` after the merge, which is checked. Publishing to
 PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
