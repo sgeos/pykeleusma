@@ -244,6 +244,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads the scripts directory, which Miri's isolation forbids"
+    )]
     fn every_op_in_the_crate_examples_is_named() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/keleusma_scripts");
         let mut seen = 0usize;
