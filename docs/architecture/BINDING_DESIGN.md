@@ -27,7 +27,7 @@ serves every later Python. maturin builds it.
 | `vm.register(name, callable)` | `Vm::register_native_closure(name, func)`, where `func` is `Fn(&[Value]) -> Result<Value, VmError> + 'static` |
 | `vm.call(*args)` | `Vm::call(&[Value])`, returning a `VmState`, implemented as described under Calling and resuming |
 | `vm.resume(value)` | `Vm::resume(Value)`, implemented likewise |
-| `vm.stream(*args)` | A Python generator over `call` and then `resume` while the state is `Yielded` |
+| `vm.stream(*args, inputs=None)` | A Python generator over `call` and `resume`, as described under Streaming |
 | Result kinds | `keleusma.Yielded`, `Finished` and `Reset` for `VmState::Yielded`, `Finished` and `Reset`. The breakpoint state is not exposed, because the binding arms no breakpoints |
 | Exceptions | `LexError`, `ParseError` and `CompileError`, each with a `Span` of `line` and `column`, implemented as described under Compilation, and `VmError`, raised as `VerifyError` or `VMError` as described under Arena sizing |
 
@@ -209,6 +209,30 @@ changing anything, leave the VM usable. Recovery through Keleusma's
 from one module on one thread are each resumed in turn over four ticks. A stream with
 tuple arguments runs 10,000 iterations from Python. A mutation that stopped marking a
 failed VM made both failure tests fail.
+
+## Streaming, roadmap task 6
+
+**Implemented on 2026-10-25.** `vm.stream(*args, inputs=None)` returns a generator. It
+yields every `Yielded` and `Reset` state and returns the `Finished` value, so
+`result = yield from vm.stream(...)` or `StopIteration.value` receives it. Iteration
+therefore ends on `Finished`.
+
+- **Inputs.** Each resume takes its value from `inputs`, an iterable, or, without one,
+  from `generator.send(value)`. The stream ends when `inputs` runs out. `next()` sends
+  `None`, which converts only where the parameter is declared as `()`, so a plain `for`
+  loop without `inputs` suits exactly those streams. Sending a value while `inputs` is
+  given raises `TypeError`, because one of the two would be silently ignored.
+- **The meaning of `Reset`.** A `loop main` never finishes. It reports `Reset` after
+  each iteration, and the next input starts the next iteration as its argument. The
+  generator yields `keleusma.Reset()` at that boundary, so the consumer sees it.
+- **Laziness and early exit.** As with any Python generator, nothing runs until the
+  generator is first advanced. Leaving early leaves the VM suspended and resumable.
+- **Why Python.** `VM.stream` delegates to `keleusma._stream.stream`, because a
+  generator is far simpler to write and to review in Python than through PyO3.
+
+**Evidence.** Tests cover a coroutine ending on `Finished` through `for`, `send` and
+`yield from`, a loop's `Reset` boundaries, a unit stream in a plain `for` loop, early
+exit, and errors. A mutation that kept iterating past `Finished` made five tests fail.
 
 ## Worst-case figures, roadmap task 5b
 

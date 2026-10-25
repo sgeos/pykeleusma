@@ -13,7 +13,7 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 **Early development.** The repository was cut on 2026-10-24 and builds against the
 published Keleusma 0.2.2 from crates.io. Compiling a script, building a verified VM,
-and calling and resuming it work. Streaming as a generator, Python natives and the
+calling and resuming it, and streaming it as a generator work. Python natives and the
 examples are still to come, as the first milestone lists.
 
 ```python
@@ -64,15 +64,19 @@ keleusma.BYTECODE_VERSION  # 1, read from the linked runtime
 
 ## Planned interface
 
-Implemented except `stream` and `register`. This is the target for version 0.1.0.
+Implemented except `register`. This is the target for version 0.1.0.
 
 ```python
 import keleusma
 
-vm.register("draw", lambda x, y: ...)  # a Python callable as a host native
+vm.register("draw", lambda x, y: ...)  # a Python callable as a host native, not yet
 
-for frame in vm.stream():  # one resume per yield of the script's loop
-    ...
+for state in vm.stream(first_event, inputs=events):  # implemented
+    match state:
+        case keleusma.Yielded(actions):
+            ...  # perform the actions
+        case keleusma.Reset():
+            ...  # one iteration done; the next event starts the next one
 ```
 
 ## Building

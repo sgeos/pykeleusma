@@ -4,31 +4,25 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, tasks 1 to 5b
+## 2026-10-25, tasks 1 to 6
 
-**Goal.** Complete all tasks from 1 to 5b, skipping those already done, then commit,
+**Goal.** Complete all tasks from 1 to 6, skipping those already done, then commit,
 push and merge all work.
 
-**Already done.** Tasks 1 to 5, merged through pull requests 1 to 7. Only task 5b
+**Already done.** Tasks 1 to 5b, merged through pull requests 1 to 8. Only task 6
 remained.
 
-**Done, task 5b.** `vm.wcet_per_iteration` returns Keleusma's worst-case time for one
-iteration of a `loop main`, in its nominal cost units. `vm.arena_capacity`, added in
-task 3, gives the arena's size in bytes. The design document, the README and the
-docstrings state the units and that both figures cover only the script and the declared
-bounds of natives, never Python or the binding's conversions.
+**Done, task 6.** `vm.stream(*args, inputs=None)` returns a generator that yields each
+`Yielded` and `Reset` state and returns the `Finished` value, so iteration ends on
+`Finished`. Resume inputs come from the `inputs` iterable or from `send`. `next()` sends
+`None`, which suits streams whose parameter is `()`.
 
-**Fact.** Keleusma reports a time of zero for a `fn main` or a `yield main`, because only
-a stream chunk has a per-iteration bound. The binding returns `None` for those, so a
-missing figure cannot be read as a free iteration.
+**The stated meaning of `Reset`.** A `loop main` never finishes. It reports `Reset`
+after each iteration, and the next input starts the next iteration as its argument. The
+generator yields `keleusma.Reset()` at that boundary.
 
-**Correction for Dromon.** Its integration document expected pipelined cycles. The units
-are Keleusma's unitless nominal cost units, which need a calibrated cost model to become
-cycles or seconds.
+**Verification.** 154 Python tests and 26 Rust tests passed locally. A mutation that kept
+iterating past `Finished` made five tests fail. The README's streaming pattern was run.
+`ruff`, `pyright`, `cargo fmt` and `cargo clippy` were clean.
 
-**Verification.** 143 Python tests and 26 Rust tests passed locally. The tests compare
-figures between scripts rather than pinning constants. A mutation that let Keleusma's
-zero through made the `None` test fail. `ruff`, `pyright`, `cargo fmt` and `cargo clippy`
-were clean.
-
-**Next.** Task 6, `vm.stream(...)` as a generator.
+**Next.** Task 7, Python natives with declared bounds.
