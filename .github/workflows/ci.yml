@@ -1,0 +1,110 @@
+# Continuous integration, roadmap task 10.
+#
+# Every job checks the same things the project's CLAUDE.md lists as the local
+# gate, so a green run here means what a green run on a developer machine means.
+# Actions are pinned to full commit hashes, with the release tag in a comment,
+# so that a moved or compromised tag cannot change what runs. The workflow only
+# reads the repository and holds no secrets.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail on any Rust compiler warning, matching `cargo clippy -D warnings`.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # 3.12 is the stable-ABI floor in Cargo.toml, and 3.15 the newest release.
+        python: ["3.12", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build the extension and install the tools
+        run: uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+
+      - name: Python tests
+        run: uv run --no-sync pytest
+
+      - name: Ruff
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
+
+      - name: Pyright
+        run: uv run --no-sync pyright
+
+      - name: Rust formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust tests
+        # The test binary links libpython, so it needs the interpreter set up
+        # above, and on Linux the directory that holds its shared library.
+        env:
+          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+        run: cargo test
+
+  miri:
+    name: miri (Tree Borrows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the nightly toolchain with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri,rust-src
+          cargo +nightly miri setup
+
+      - name: Rust tests under Miri
+        # Tree Borrows, because Keleusma 0.2.2's rkyv validation trips Stacked
+        # Borrows. See "Known issues in dependencies" in BINDING_DESIGN.md.
+        env:
+          MIRIFLAGS: -Zmiri-tree-borrows
+          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: cargo +nightly miri test --lib

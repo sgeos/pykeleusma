@@ -14,6 +14,7 @@ import threading
 
 import pytest
 
+import keleusma
 from keleusma._keleusma import _live_vm_count, _OwnedVmProbe
 
 ANSWER = "fn main() -> Word { 40 + 2 }"
@@ -91,8 +92,10 @@ def test_a_module_the_verifier_rejects_is_refused_and_counts_nothing() -> None:
     assert _live_vm_count() == before
 
 
-def test_source_that_does_not_parse_reports_its_location() -> None:
-    with pytest.raises(ValueError, match=r"parse error at 1:21"):
+def test_the_probe_reports_source_errors_like_compile() -> None:
+    # The probe compiles through the same path as keleusma.compile, whose location
+    # reporting is tested in test_compile.py.
+    with pytest.raises(keleusma.ParseError):
         _OwnedVmProbe("fn main() -> Word { @ }")
 
 

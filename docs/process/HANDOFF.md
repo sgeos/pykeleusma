@@ -7,28 +7,22 @@ flight, why, what is owed and the next step, within a budget of 8 KB. History li
 git. A rewrite that drops an open item says in its commit message whether the item was
 completed, moved or abandoned.
 
-## State on 2026-10-24
+## State on 2026-10-25
 
-- **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD. No
-  continuous integration is configured yet.
-- **Task 1 done and merged.** `OwnedVm` in `src/owned_vm.rs` owns the arena and the VM
-  together with `self_cell`. It is tested in Rust, under Miri with Tree Borrows, and from
-  Python through the temporary private class `_OwnedVmProbe`, including a peak-memory
-  test with a control and a test of the per-thread ownership model. The branch
-  `feat/owned-vm` was merged into `main` through a pull request at the operator's
-  instruction.
-- **Design settled for tasks 4 and 7.** `Fixed` becomes an exact `keleusma.Fixed` that
-  converts with `float(value)`. Native bounds are declared when the VM is built, so the
-  arena is sized with them through Keleusma's own `auto_arena_capacity_for`, and later
-  changes are re-checked with `verify_resources`. The operator confirmed the threading
-  model, one VM per dedicated thread.
+- **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
+- **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
+  and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
+  local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
+- **Tasks 1 and 2 done.** `OwnedVm` owns the arena and the VM. `keleusma.compile`
+  returns a `Module` or raises `LexError`, `ParseError` or `CompileError`, each a
+  `SourceError` with `msg`, `lineno` and a character-based `colno`.
+- **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Next step
 
-The operator approved the roadmap changes for Dromon on 2026-10-25, and they are in
-[`../roadmap/V0_1_0.md`](../roadmap/V0_1_0.md). Task 2, `keleusma.compile` with located
-exceptions, comes next. Task 3 then fixes the arena sizing defect, whose method waits on
-the `v0.2.3` reply.
+Task 3, `keleusma.VM(module)`, replacing `_OwnedVmProbe`. It must size the arena so a
+stream survives `Reset` and composite arguments, and its method waits on the `v0.2.3`
+reply. If that reply is slow, the fallback is a documented margin labelled a workaround.
 
 ## Open
 
@@ -67,8 +61,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 12 tests pass
-cargo test                  # 3 Rust tests pass
+uv sync && uv run pytest    # 26 tests pass
+cargo test                  # 8 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

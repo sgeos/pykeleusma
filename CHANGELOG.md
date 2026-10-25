@@ -7,6 +7,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `keleusma.compile(source)`, returning an immutable `keleusma.Module`, and the
+  exceptions `KeleusmaError`, `SourceError`, `LexError`, `ParseError` and
+  `CompileError`. A source error carries `msg`, `lineno` and a character-based `colno`.
+- Continuous integration on GitHub Actions, testing Linux and macOS with Python 3.12
+  and 3.15, plus the Rust tests under Miri.
+
 - `OwnedVm`, which owns a Keleusma arena and the VM that borrows it as one `self_cell`
   value, sizes the arena from the module, and raises `MemoryError` rather than aborting
   when the arena cannot be allocated. A temporary private class `_OwnedVmProbe` and a

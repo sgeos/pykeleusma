@@ -4,32 +4,30 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, roadmap approval and the sandbox settings
+## 2026-10-25, continuous integration and task 2
 
-**Done.** The six approved roadmap changes for Dromon are in `docs/roadmap/V0_1_0.md`.
-Tasks 3, 4, 5 and 8 grew and task 5b was added. The design document records the arena
-sizing defect and the plan to decode composites by declared type. No code changed.
+**Goal.** Set up remote continuous integration, complete task 1 if not yet complete,
+complete task 2, and commit, push and merge all work.
 
-**Checked in the sandbox.**
-- **Mailbox.** A write transaction on the interline store, rolled back, succeeded.
-- **sccache.** `SCCACHE_SERVER_PORT` is 4227 and `SCCACHE_DIR` reaches the environment,
-  but sccache reports the literal path `~/Library/Caches/Mozilla.sccache-agent`. It does
-  not expand `~`, so the value needs an absolute path. The shared cache directory is
-  still writable from the sandbox.
-- **uv.** `python3` is now MacPorts Python 3.14, so pip installed uv 0.13.5 under
-  `~/Library/Python/3.14/bin`, which is not on the `PATH`. The `PATH` still finds 0.9.5
-  under `~/Library/Python/3.9/bin`, which belongs to `/usr/bin/python3`, Python 3.9.6.
+**Task 1.** Already complete and merged on 2026-10-24. Its arena sizing defect belongs to
+task 3 under the approved roadmap, so nothing was added to task 1.
 
-**Writable paths.** The concrete changes are in the operator reply of this session and
-summarised here. Inside the writable `~/.cargo`, deny writes to `bin`, `env`,
-`config.toml`, `config` and `credentials.toml`, and deny reads of `credentials.toml`.
-Remove the shared sccache cache from the writable list. Deny writes to `interline.py`
-and `PROTOCOL.md` in the interline store. Optionally give uv a separate agent cache.
+**Continuous integration, task 10.** `.github/workflows/ci.yml` runs every local check on
+Linux and macOS with Python 3.12 and 3.15, and the Rust tests under Miri with Tree
+Borrows. Actions are pinned to commit hashes, using releases at least two weeks old.
+The workflow has read-only permissions and no secrets.
 
-**Follow-up, the same day.** After the operator's settings refresh, every denial was
-probed and refused, the writable paths stayed writable, uv on the `PATH` is 0.13.5,
-`SCCACHE_DIR` resolves to the absolute agent cache, and the full development loop,
-including the mailbox, passed inside the sandbox. `v0.2.3` sent an interim reply,
-recorded in the handoff.
+**Task 2.** `keleusma.compile(source)` returns an immutable `Module` and releases the GIL
+while compiling. Errors are Python classes in `keleusma._errors`, following
+`json.JSONDecodeError`. `SourceError` derives from `KeleusmaError` and `ValueError`, and
+carries `msg`, `lineno` and `colno`. The column counts characters, converted from
+Keleusma's byte column. A line of 0 from Keleusma becomes `None`.
 
-**Next.** Task 2, `keleusma.compile` with located exceptions.
+**Verification.** Locally, 26 Python tests on Python 3.12 and 3.15.1, 8 Rust tests,
+`ruff`, `pyright` in strict mode, `cargo fmt` and `cargo clippy` were clean. The remote
+result is in the pull request.
+
+**Not covered.** No test shows that the GIL is released during compilation. The memory
+test's behaviour on Linux is first checked by this CI run.
+
+**Next.** Task 3, `keleusma.VM(module)` with arena sizing that survives `Reset`.
