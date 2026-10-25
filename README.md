@@ -47,8 +47,9 @@ Python.
 - **Two limits are empirical in this release.** The arena includes a margin for a
   shortfall in Keleusma 0.2.2's own sizing, measured rather than proven, and composite
   arguments and native results draw on a budget the host chooses, `argument_bytes`.
-  The binding also rejects a class of mistyped yields that Keleusma 0.2.2 accepts and
-  that could crash a read, but it cannot check every expression. The design document
+  The binding also rejects mistyped yields that Keleusma 0.2.2 accepts and that could
+  crash a read, and refuses a text-bearing yield whose type Keleusma did not record,
+  but it trusts the types Keleusma does record, so it cannot check every expression. The design document
   records the evidence and the limits.
 
 What the binding does guarantee is that failures surface as Python exceptions. A
@@ -90,9 +91,11 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
   `OverflowError` instead of wrapping.
 - **Streams.** `vm.stream(*args, inputs=...)` drives a VM as a generator. A `loop main`
   reports `Reset` after each iteration, and the next input starts the next one.
+  `vm.step(value)` advances one iteration in a single call, for a frame loop.
 - **Natives** are passed as `keleusma.VM(module, natives={"host::f": f})`, or as
   `keleusma.Native(f, wcet=..., wcmu_bytes=...)` to declare bounds, which size the
-  arena or are refused.
+  arena or are refused. A native the script imports with `use external` needs
+  `keleusma.Native(f, max_invocations=n)`, the attested calls per iteration.
 - **State.** Private data fields start as `()`, not zero, so assign one before reading
   it. A shared `data` block is owned by the VM, which keeps it across calls.
   `vm.call(x, shared=buffer)`, with a `bytearray` of `vm.shared_data_bytes` bytes, syncs
@@ -101,7 +104,7 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
   convert the block's fields by their declared types.
 - **Arena budget.** A VM reserves `argument_bytes`, 4096 by default, of its arena for
   composite arguments such as tuples carrying text. A host that passes larger values
-  gives a larger figure.
+  gives a larger figure. `vm.arena_peak_bytes` shows the most the VM has used.
 - **Native errors.** A native that raises `keleusma.NativeError(code)` hands `code` to
   a script that handles it with `host::f(x) { ok(v) => v, error(code) => ... }`. Any
   other exception fails the call and reaches the caller unchanged.

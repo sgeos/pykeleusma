@@ -29,25 +29,33 @@
 //! recorded type as a whole, its elements are compared one by one. A mismatch raises
 //! `keleusma.CompileError` at the yield.
 //!
+//! # Values with no recorded type
+//!
+//! Keleusma records a type only where it is certain. Where it recorded none, and the
+//! declared type holds `Text` inside a composite, the guard refuses the yield, because
+//! a flat `Text` field is the pointer a mistyped value would make Keleusma's decoder
+//! misread. One case is admitted, a name bound by `let name = yield ...` in `main`
+//! when `main`'s resume type equals its declared yield type, because the binding
+//! converted that resumed value by exactly that type. Where the declared type holds no
+//! flat `Text`, a mistyped value is caught or misread without a pointer when it is
+//! decoded, so it is let through, as is a recorded type the binding cannot model.
+//!
 //! # What it does not check
 //!
-//! Keleusma records a type only where it is certain, so an expression with no
-//! recorded type, for example a tuple holding a value received from an earlier
-//! `yield`, is not compared. That is a residual risk, stated in the design document,
-//! that only a fix in Keleusma's type checker removes. The guard also treats a
-//! recorded type it cannot model, such as a named type, as unknown, so a type alias
-//! cannot cause a false rejection.
+//! The guard trusts the types Keleusma does record. It was run over the test suite,
+//! the crate's example scripts and the book's programs without refusing any that
+//! Keleusma runs correctly.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use keleusma::ast::{Expr, Program, TypeExpr};
+use keleusma::ast::{Expr, Pattern, Program, Stmt, TypeExpr};
 use keleusma::monomorphize::monomorphize_with_provenance;
 use keleusma::target::Target;
 use keleusma::token::Span;
 use keleusma::typecheck::{check_with_target, check_with_target_recording};
 use keleusma::visitor::Visitor;
 
-use crate::types::{Resolver, Ty};
+use crate::types::{EntrySignature, Resolver, Ty};
 
 /// A yield whose value has a type other than the declared one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,16 +75,24 @@ pub fn check(program: &Program, target: Target) -> Result<Option<Mismatch>, Stri
     check_with_target_recording(&mut owned, target).map_err(|e| e.message)?;
     let empty = BTreeMap::new();
     let resolver = Resolver::new(&owned, default_frac_bits);
+    // The binding converts every resumed value by `main`'s declared resume type, so a
+    // name bound to a yield's result in `main` holds a value of that type.
+    let resume = EntrySignature::from_program(&owned, default_frac_bits)
+        .and_then(|signature| signature.resume.ok());
     for function in &owned.functions {
         let Ok(declared) = resolver.resolve(&function.return_type) else {
             continue;
         };
+        let resumes_as_declared =
+            function.name == "main" && resume.as_ref().is_some_and(|r| *r == declared);
         let mut visitor = YieldVisitor {
             declared: &declared,
             recorded: owned.fn_expr_types.get(&function.name).unwrap_or(&empty),
             resolver: &resolver,
             function: &function.name,
             found: None,
+            resumes_as_declared,
+            resumed: BTreeSet::new(),
         };
         visitor.visit_block(&function.body);
         if visitor.found.is_some() {
@@ -92,6 +108,10 @@ struct YieldVisitor<'a> {
     resolver: &'a Resolver,
     function: &'a str,
     found: Option<Mismatch>,
+    /// Whether this is `main` and its resume type equals its declared yield type.
+    resumes_as_declared: bool,
+    /// Names currently bound by `let name = yield ...`, which hold resumed values.
+    resumed: BTreeSet<String>,
 }
 
 impl YieldVisitor<'_> {
@@ -103,9 +123,9 @@ impl YieldVisitor<'_> {
 
     /// The first mismatch between `expr` and `expected`, descending into tuple and
     /// array literals whose type as a whole was not recorded.
-    fn compare(&self, expr: &Expr, expected: &Ty) -> Option<(Ty, Span)> {
+    fn compare(&self, expr: &Expr, expected: &Ty) -> Option<Found> {
         if let Some(actual) = self.recorded_type(expr) {
-            return (actual != *expected).then_some((actual, expr.span()));
+            return (actual != *expected).then(|| Found::Mismatch(actual, expr.span()));
         }
         match (expr, expected) {
             (Expr::TupleLiteral { elements, .. }, Ty::Tuple(types))
@@ -123,28 +143,105 @@ impl YieldVisitor<'_> {
                     .iter()
                     .find_map(|element| self.compare(element, element_ty))
             }
+            // A resumed value, which the binding converted by the declared type.
+            (Expr::Ident { name, .. }, _)
+                if self.resumes_as_declared && self.resumed.contains(name) =>
+            {
+                None
+            }
+            // No recorded type and no literal to descend into. A flat `Text` field
+            // is a raw pointer that a mistyped value would make Keleusma 0.2.2's
+            // decoder dereference, so where `expected` holds one inside a composite
+            // the value is refused rather than trusted. Elsewhere a wrong value is
+            // caught safely when it is read, so it is let through.
+            _ if holds_flat_text(expected, false) => Some(Found::Unknown(expr.span())),
             _ => None,
         }
     }
 }
 
+/// What the comparison found at a yield.
+enum Found {
+    /// A recorded type other than the declared one.
+    Mismatch(Ty, Span),
+    /// No recorded type where the declared type holds a flat `Text` field.
+    Unknown(Span),
+}
+
+/// Whether a value of `ty` holds a `Text` field inside a composite, which Keleusma
+/// stores flat as a pointer and a length. A `Text` on its own is a boxed value whose
+/// type the reader checks, so it is safe. `nested` is whether `ty` is itself a field.
+fn holds_flat_text(ty: &Ty, nested: bool) -> bool {
+    match ty {
+        Ty::Text => nested,
+        Ty::Tuple(types) => types.iter().any(|t| holds_flat_text(t, true)),
+        Ty::Array(element, _) => holds_flat_text(element, true),
+        Ty::Struct { fields, .. } => fields.iter().any(|(_, t)| holds_flat_text(t, true)),
+        Ty::Enum { variants, .. } => variants
+            .iter()
+            .flat_map(|v| v.fields.iter())
+            .any(|t| holds_flat_text(t, true)),
+        Ty::Option(inner) => holds_flat_text(inner, true),
+        Ty::OutOnly { inner, .. } => holds_flat_text(inner, nested),
+        Ty::Unit
+        | Ty::Bool
+        | Ty::Byte
+        | Ty::Word
+        | Ty::Fixed(_)
+        | Ty::Float
+        | Ty::Multiword { .. }
+        | Ty::Opaque(_) => false,
+    }
+}
+
 impl Visitor for YieldVisitor<'_> {
+    fn visit_stmt(&mut self, stmt: &Stmt) {
+        self.walk_stmt(stmt);
+        // Track the names that hold resumed values, in source order. Any other
+        // binding of a name ends its tracking, so a shadowing `let` is not trusted.
+        if let Stmt::Let(binding) = stmt
+            && let Pattern::Variable(name, _) = &binding.pattern
+        {
+            if matches!(binding.value, Expr::Yield { .. }) {
+                self.resumed.insert(name.clone());
+            } else {
+                self.resumed.remove(name);
+            }
+        }
+    }
+
     fn visit_expr(&mut self, expr: &Expr) {
         if self.found.is_some() {
             return;
         }
         if let Expr::Yield { value, .. } = expr
-            && let Some((actual, span)) = self.compare(value, self.declared)
+            && let Some(found) = self.compare(value, self.declared)
         {
-            let message = format!(
-                "this yield in `{}` produces {} where the declared type is {}; \
-                 Keleusma 0.2.2 accepts this, and reading it could crash, so the \
-                 binding rejects it",
-                self.function,
-                actual.name(),
-                self.declared.name()
-            );
-            self.found = Some(Mismatch { message, span });
+            self.found = Some(match found {
+                Found::Mismatch(actual, span) => Mismatch {
+                    message: format!(
+                        "this yield in `{}` produces {} where the declared type is {}; \
+                         Keleusma 0.2.2 accepts this, and reading it could crash, so the \
+                         binding rejects it",
+                        self.function,
+                        actual.name(),
+                        self.declared.name()
+                    ),
+                    span,
+                },
+                Found::Unknown(span) => Mismatch {
+                    message: format!(
+                        "Keleusma 0.2.2 records no type for this yielded value in `{}`, \
+                         whose declared type {} holds text inside a composite, which a \
+                         mistyped value would make Keleusma's decoder misread, so the \
+                         binding rejects it; build the value as a literal, or bind it \
+                         with `let` to a declared type first",
+                        self.function,
+                        self.declared.name()
+                    ),
+                    span,
+                },
+            });
             return;
         }
         self.walk_expr(expr);
@@ -184,6 +281,30 @@ mod tests {
     fn a_scalar_mistyped_yield_is_caught() {
         let source = "loop main(e: Word) -> Text { if e > 0 { yield \"a\" } else { yield 3 } }";
         assert!(check_source(source).is_some());
+    }
+
+    #[test]
+    fn an_unrecorded_text_bearing_yield_is_refused() {
+        // A resumed `Word` yielded where `(Text, Word)` is declared. Keleusma 0.2.2
+        // records no type for `n` and accepts the program.
+        let source = "loop main(e: Word) -> (Text, Word) \
+                      { let n = yield (\"a\", e); let m = yield n; m }";
+        assert!(check_source(source).is_some());
+    }
+
+    #[test]
+    fn a_resumed_value_of_the_declared_type_may_be_yielded_again() {
+        let source = "loop main(e: (Text, Word)) -> (Text, Word) \
+                      { let n = yield e; let m = yield n; m }";
+        assert!(check_source(source).is_none());
+    }
+
+    #[test]
+    fn a_shadowed_resumed_name_is_not_trusted_as_resumed() {
+        // `n` is rebound to a literal, whose recorded type is then what is compared.
+        let ok = "loop main(e: (Text, Word)) -> (Text, Word) \
+                  { let n = yield e; let n = (\"x\", 1); let m = yield n; m }";
+        assert!(check_source(ok).is_none());
     }
 
     #[test]

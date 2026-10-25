@@ -13,10 +13,11 @@ completed, moved or abandoned.
 - **Continuous integration.** `ci.yml` covers Linux, macOS and Windows with Python
   3.12 and 3.15, every local check, and Miri with Tree Borrows. `wheels.yml` builds and
   smoke-tests wheels for five platforms and an sdist, and publishes nothing.
-- **Tasks 1 to 13 done.** Task 13 resolved the known issues and debt, and prepared
-  for Keleusma 0.2.3. It added opaque host values, multiword big numbers, typed shared
-  data, private seeding at a swap, encrypted swaps, const generics and custom cost
-  models. It also fixed a crash that fuzzing found. The version is 0.1.0.
+- **Tasks 1 to 14 done.** Task 13 resolved the known issues and debt, and prepared for
+  Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
+  `use external` natives run, and the yield guard covers values with no recorded type.
+  `vm.step` advances one iteration per call, and `vm.arena_peak_bytes` shows arena use.
+  The version is 0.1.0.
 - **Migration.** `docs/architecture/MIGRATION_V0_2_3.md` is the plan. `src/compat.rs`
   holds the changed calls, `src/canaries.rs` pins 0.2.2 behaviours, and every
   workaround carries `KELEUSMA-0.2.2`.
@@ -32,22 +33,20 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 ## Next step
 
 Wait for Keleusma 0.2.3 to be published, with `keleusma-wire`, then follow the
-migration plan. A PyPI release of 0.1.0 needs the operator's confirmation.
+migration plan. Publishing 0.1.0 to PyPI is the operator's decision.
 
 ## Open
 
-- **Blocked on Keleusma.** `use external` natives, the old module's private values at
-  a swap, composite private seeding, type-generic instances and const-generic enum
-  inputs, and the `rodata` accessor PR 517 makes necessary. Requested in
-  `pykeleusma-20261025-migration-prep`.
-- **Keleusma workarounds.** Three hot swap behaviours, the footprint analysis on
-  unverified modules, the opaque registry route and the halting-error carrier. The
-  migration plan lists each.
-- **Yield guard is partial** until a release with PR 517 is pinned, which `v0.2.3`
-  reported merged in `v023-20261025-pr517-merged-py`.
-- **One iteration per frame, not one resume.** A 0.2.2 stream iteration is one yield
-  and one `Reset`, so task 8's frame loop resumes twice per frame.
-- **Arena margin is empirical.** A canary fails if Keleusma fixes its footprint.
+- **Blocked on Keleusma, requested in `pykeleusma-20261025-migration-prep`.** Reading
+  the old module's private values at a swap. Seeding composite private fields.
+  Type-generic instances and const-generic enum inputs. The `rodata` accessor that
+  PR 517 makes necessary. Each would need the binding to read Keleusma's private memory
+  without an API, which would be unsound.
+- **Empirical arena margin.** It covers a shortfall in Keleusma 0.2.2's own sizing, is
+  measured rather than proven, and is now observable through `vm.arena_peak_bytes`.
+  Exhaustion raises `VMError`. A canary fails if Keleusma fixes its footprint.
+- **The yield guard trusts recorded types.** A wrong recorded type would be a Keleusma
+  defect. PR 517, reported merged in `v023-20261025-pr517-merged-py`, addresses yields.
 - **With `v0.2.3`.** Unanswered requests `pykeleusma-20261025-dynamic-host-findings`,
   `pykeleusma-20261025-book-coverage-findings` with its correction, and
   `pykeleusma-20261025-migration-prep`.
@@ -79,8 +78,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 379 tests pass
-cargo test                  # 41 Rust tests pass
+uv sync && uv run pytest    # 394 tests pass
+cargo test                  # 47 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

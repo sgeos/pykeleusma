@@ -7,6 +7,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- The open items of task 13 that the binding could close, roadmap task 14. Natives
+  imported with `use external` run, attested with `keleusma.Native(f,
+  max_invocations=n)`. `vm.step(value)` advances a stream one iteration in a single
+  call, and the PyGame example uses it. `vm.arena_peak_bytes` shows arena use.
+
 - Known issues, technical debt and readiness for Keleusma 0.2.3, roadmap task 13.
   Opaque host values, through which any Python object passes, and `Multiword<N, F>` big
   numbers convert at the boundary. `vm.read_shared` and `vm.write_shared` convert the
@@ -84,6 +89,10 @@ All notable changes are recorded here. The format follows
   repository.
 
 ### Fixed
+
+- The yield guard now refuses a yield whose value has no recorded type when the
+  declared type holds text inside a composite, which closes the residual risk it had,
+  and admits a resumed value of the declared type.
 
 - A malformed module from `load_module` could crash the process with a stack overflow,
   because the binding sized the arena with Keleusma's footprint analysis before Keleusma

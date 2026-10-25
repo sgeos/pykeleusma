@@ -10,10 +10,10 @@ Run it without a display for a fixed number of frames, as the tests do.
 
 **One iteration per frame.** A Keleusma 0.2.2 stream must yield, and its verifier
 rejects an inner loop without a static bound, so each iteration of a `loop main` is one
-yield followed by a `Reset`. Each frame therefore advances the stream by one iteration.
-The resume that completes the previous iteration returns `Reset`, and the next resume,
-with this frame's input, yields this frame's result. The script's own work per frame is
-bounded by `vm.wcet_per_iteration`, while drawing and the rest of the frame are Python.
+yield followed by a `Reset`. Each frame advances the stream by one iteration with a
+single `vm.step(frame_input)`, which completes the previous iteration through its
+`Reset` and yields this frame's result. The script's own work per frame is bounded by
+`vm.wcet_per_iteration`, while drawing and the rest of the frame are Python.
 """
 
 import argparse
@@ -44,18 +44,10 @@ class Ball:
         self.vm = keleusma.VM(keleusma.compile(SCRIPT))
         self.position = position
         self.velocity = velocity
-        self._started = False
 
     def advance(self, seconds: float) -> tuple[float, float]:
         """Run one iteration with the frame's elapsed time and return the new state."""
-        frame_input = (seconds, self.position, self.velocity)
-        if not self._started:
-            state = self.vm.call(frame_input)
-            self._started = True
-        else:
-            state = self.vm.resume(frame_input)
-            if isinstance(state, keleusma.Reset):
-                state = self.vm.resume(frame_input)
+        state = self.vm.step((seconds, self.position, self.velocity))
         match state:
             case keleusma.Yielded((float() as position, float() as velocity)):
                 self.position, self.velocity = position, velocity

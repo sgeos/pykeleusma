@@ -29,8 +29,14 @@ class Native:
     `wcmu_bytes` the worst-case arena memory one call uses, which includes a composite
     value the native returns, since Keleusma copies that into the arena. `None` takes
     Keleusma's default for that bound.
+
+    `max_invocations` is required for a native the script imports with `use external`
+    and refused for any other. It is the host's attested bound on how many times the
+    native may be called in one stream iteration, which Keleusma records in place of a
+    per-call bound. Like the other bounds it is a promise Python does not enforce.
     """
 
     function: Callable[..., object]
     wcet: int | None = None
     wcmu_bytes: int | None = None
+    max_invocations: int | None = None

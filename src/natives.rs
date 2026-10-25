@@ -56,6 +56,9 @@ pub struct Slot {
     /// Whether one of Keleusma's bundled libraries provides this native, in which
     /// case Keleusma calls its own implementation and `callable` is unused.
     pub library: bool,
+    /// For a `use external` native, the host's attested bound on calls per stream
+    /// iteration, and `None` for any other native.
+    pub max_invocations: Option<u32>,
 }
 
 /// The natives of one VM by full name, shared with the closures Keleusma holds.
