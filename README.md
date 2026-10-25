@@ -126,7 +126,11 @@ assert vm.call(1) == keleusma.Yielded(2)
 ```
 
 A module loaded from bytes has no declared types, so only scalars and text cross the
-boundary. `to_signed_bytes(seed, recipient_key=...)` also encrypts the module, and
+boundary. **Bytecode is code.** Its checksum catches corruption, not tampering, and
+Keleusma's decoder is not known to be robust against crafted bytes, so load unsigned
+bytecode only from a source as trusted as the script's own source. A signature tells
+the host who produced the bytes. It protects only as far as the holders of the trusted
+keys are trusted. `to_signed_bytes(seed, recipient_key=...)` also encrypts the module, and
 `load_module` then needs the matching `decryption_key`. A swap happens only at an
 iteration boundary, keeps shared data and starts private data afresh, and the VM is
 built from the module with the larger footprint, because its arena does not grow.

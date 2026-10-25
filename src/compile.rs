@@ -312,6 +312,17 @@ pub fn compile(py: Python<'_>, source: &str) -> PyResult<Module> {
 /// Keleusma refuses it, so a host that expects signed code cannot be handed unsigned
 /// code. Raises `keleusma.LoadError` for malformed bytes and `keleusma.VerifyError`
 /// for a failed signature or a missing key.
+///
+/// # Trust boundary
+///
+/// Bytecode is code. Its checksum detects accidental corruption, not tampering. The
+/// bytes are decoded by Keleusma's own decoder and checked by its verifier, and the
+/// binding has not established that either is robust against crafted input. Keleusma
+/// 0.2.2 has a confirmed crash in its decoding of values from a program its compiler
+/// accepts, and no fuzzing of this function has been done. Unsigned bytes should
+/// therefore come only from a source the host trusts as it would trust the script's
+/// source. A signature establishes who produced the bytes, not that they are safe, so
+/// it protects only to the extent that the holders of the trusted keys are trusted.
 #[pyfunction]
 #[pyo3(signature = (data, *, verifying_keys = None, decryption_key = None))]
 pub fn load_module(

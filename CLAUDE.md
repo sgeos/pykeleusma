@@ -65,9 +65,8 @@ operator has modified it.
 `main` is always green. Work happens on short-lived feature branches merged into `main` by
 a no-fast-forward merge once checks pass, through a pull request once a remote exists. Use
 scoped conventional commits such as `feat:`, `fix:`, `docs:`, `test:` and `chore:`.
-Attribute assisted commits to the assistant that actually contributed, with
-`Co-Authored-By: Claude <noreply@anthropic.com>` for Claude and
-`Co-Authored-By: Codex <noreply@openai.com>` for Codex.
+Commit messages carry no `Co-Authored-By` trailer, at the operator's instruction of
+2026-10-25.
 
 **Irreversible or outward-facing actions need the operator's confirmation in session.**
 That includes creating or pushing to a remote, publishing to PyPI or crates.io, and

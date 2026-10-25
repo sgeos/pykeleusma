@@ -482,6 +482,29 @@ Without declared types the binding cannot refuse a mistyped argument before runn
 so Keleusma's entry check refuses it as a runtime error and the VM fails until
 `vm.reset()`. Keleusma 0.2.3 rejects the version 1 bytecode that 0.2.2 writes.
 
+**Trust boundary for bytecode.** Bytecode is code, and the binding treats it as such.
+The wire format's checksum detects corruption, not tampering. Keleusma's decoder and
+verifier are the only checks on crafted bytes, and the binding has not established
+that they are robust. **Fact.** Keleusma 0.2.2 can crash in its safe decode on a
+program its own compiler accepts, which `v0.2.3` confirmed in
+`v023-20261025-yield-soundness-reply`. **Inference.** A loaded module converts values
+only by their own tags and refuses composites, which avoids the known crash route, but
+that does not show the decoder is safe on crafted input. **Not done.** No fuzzing of
+`load_module`. Unsigned bytes should therefore come only from a source trusted as the
+script's source would be. A signature establishes the producer and protects only as
+far as the holders of the trusted keys are trusted.
+
+**Library declarations.** Keleusma's compiler takes a script's `use math::sqrt(...)`
+line on trust and does not compare it with the library's signature. A library native
+builds its result by its own signature, while the binding converts by the script's,
+so a mismatch reads a value as a type it does not have. A probe of `shell::run`
+declared with its tuple reversed returned wrong values silently, and `v0.2.3` confirmed
+that decoding with a mismatched type can crash 0.2.2. The binding therefore refuses a
+module whose declaration of a library-served native differs from the library's, at
+construction and at a swap. A native the host serves with a callable is not checked,
+because the binding converts both directions by the script's declaration. A bare `use`
+line converts by tag and is not checked.
+
 **Signed and encrypted modules.** `Module.to_signed_bytes(seed, recipient_key=None)`
 and `load_module(data, verifying_keys=..., decryption_key=...)`, the book's chapters 26
 and 36. Keys are 32-byte strings, checked for length and, for verifying keys, for being
@@ -497,7 +520,10 @@ from Python lives in a `bytes` object the binding cannot zero.
 `Finished`, the book's chapter 37. Shared data survives a swap with the same layout,
 and Keleusma refuses a swap that changes it. Private data starts as `()`, so state is
 not carried forward through private slots. A native the new module adds must be
-registered before the next call. A swap also recovers a failed VM. Three facts about
+registered before the next call. Every native the host serves gets a fresh closure
+with the new module's declaration, because a closure converts by the declaration of
+the module it was built for, and a stale one built values of the old type until
+2026-10-25. A swap also recovers a failed VM. Three facts about
 Keleusma 0.2.2 shape the implementation, each verified with a pure Rust probe.
 
 - `Vm::replace_module` verifies the new module's resource bounds against the arena's

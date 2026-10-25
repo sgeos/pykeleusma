@@ -91,3 +91,61 @@ def test_the_published_signatures_compile(library: str) -> None:
     signatures = keleusma.library_signatures(library)
     assert signatures.count("use ") > 0
     keleusma.compile(signatures + "\nfn main() -> Word { 0 }")
+
+
+# A script's declaration of a library native must match the library's own.
+
+MISDECLARED = keleusma.compile(
+    "use math::sqrt(Float) -> Word\nfn main(x: Float) -> Word { math::sqrt(x) }"
+)
+
+
+def test_a_misdeclared_library_native_is_refused() -> None:
+    # Keleusma's compiler takes the script's line on trust. The library returns a
+    # Float, which the binding would otherwise read as the declared Word.
+    with pytest.raises(keleusma.VerifyError, match=r"use math::sqrt\(Float\) -> Float"):
+        keleusma.VM(MISDECLARED, libraries=["math"])
+
+
+def test_a_misdeclared_parameter_is_refused() -> None:
+    module = keleusma.compile(
+        "use math::sqrt(Word) -> Float\nfn main(x: Word) -> Float { math::sqrt(x) }"
+    )
+    with pytest.raises(keleusma.VerifyError, match="differs from the library's"):
+        keleusma.VM(module, libraries=["math"])
+
+
+def _four(x: float) -> int:
+    return 4
+
+
+def test_a_host_callable_may_serve_any_declaration() -> None:
+    # The binding converts a host callable's values by the script's declaration on
+    # both sides, so the library's signature does not apply.
+    vm = keleusma.VM(MISDECLARED, libraries=["math"], natives={"math::sqrt": _four})
+    assert vm.call(16.0) == keleusma.Finished(4)
+
+
+def test_a_bare_declaration_is_not_checked() -> None:
+    # A bare `use` converts by each value's own tag, which cannot be misread.
+    module = keleusma.compile(
+        "use math::sqrt\nfn main(x: Float) -> Float { math::sqrt(x) }"
+    )
+    assert keleusma.VM(module, libraries=["math"]).call(4.0) == keleusma.Finished(2.0)
+
+
+@pytest.mark.parametrize("library", ["math", "audio", "shell"])
+def test_the_published_signatures_pass_the_check(library: str) -> None:
+    source = keleusma.library_signatures(library) + "\nfn main() -> Word { 0 }"
+    vm = keleusma.VM(keleusma.compile(source), libraries=[library])
+    assert vm.call() == keleusma.Finished(0)
+
+
+def test_a_swap_to_a_misdeclared_module_is_refused() -> None:
+    vm = keleusma.VM(MISDECLARED, libraries=["math"], natives={"math::sqrt": _four})
+    vm.replace_module(SQRT)
+    assert vm.call(9.0) == keleusma.Finished(4.0)  # The host callable still serves it.
+    plain = keleusma.VM(SQRT, libraries=["math"])
+    with pytest.raises(keleusma.VerifyError, match="differs from the library's"):
+        plain.replace_module(MISDECLARED)
+    assert plain.call(9.0) == keleusma.Finished(3.0)

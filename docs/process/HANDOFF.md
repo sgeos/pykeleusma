@@ -20,6 +20,12 @@ completed, moved or abandoned.
   `tests/test_book.py`. The design records it under Book coverage.
 - **Units.** `wcet_per_iteration` is documented in nominal cycles since the operator's
   correction on 2026-10-25. `pydromon` was notified.
+- **Keleusma version.** The operator decided on 2026-10-25 to stay on Keleusma 0.2.2.
+- **Commit trailer.** Commits carry no `Co-Authored-By` trailer since 2026-10-25, at
+  the operator's instruction. Earlier commits were not rewritten.
+- **Safety checks.** A script's declaration of a library native must match the
+  library's signature. Bytecode is documented as code, to be loaded unsigned only from
+  a trusted source.
 - **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 
@@ -31,9 +37,11 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
 
-The 0.1.0 milestone's tasks are complete. A release to PyPI needs the operator's
-confirmation in session. Candidate follow-ups are a typed view of shared data blocks,
-carrying private data across a hot swap, and the replies `v0.2.3` owes.
+The 0.1.0 milestone's tasks are complete. Before a release, `Cargo.toml` still says
+version `0.0.0`, no workflow builds wheels, and Windows is untested. A release to PyPI
+needs the operator's confirmation in session. Other candidates are fuzzing
+`load_module`, finishing the survey of the 32 book programs not yet run, a typed view
+of shared data blocks, and carrying private data across a hot swap.
 
 ## Open
 
@@ -50,9 +58,12 @@ carrying private data across a hot swap, and the replies `v0.2.3` owes.
 - **Arena margin is empirical.** Task 3 covers the observed shortfall of one operand
   stack doubling. It is not a proven bound. A Rust test fails if Keleusma fixes its
   footprint, prompting a review.
-- **With `v0.2.3`.** Requests `pykeleusma-20261025-dynamic-host-findings` and
-  `pykeleusma-20261025-yield-soundness`, with only the interim reply
-  `v023-20261025-dynamic-host-interim`. Request
+- **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, with only
+  the interim reply `v023-20261025-dynamic-host-interim`. The reply
+  `v023-20261025-yield-soundness-reply` confirmed the yield crash, fixed it in their
+  PR 517 for 0.2.3, and noted that a 0.2.2.x patch needs operator authorization. It
+  also named decoding with a mismatched type as a second crash route, which led to the
+  library declaration check. Request
   `pykeleusma-20261025-book-coverage-findings`, reporting the signed hot swap failure,
   the plain swap ignoring the trust matrix, a loose swap resource check and the text
   concatenation discrepancy with the FAQ, with its correction
@@ -85,8 +96,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 325 tests pass
-cargo test                  # 29 Rust tests pass
+uv sync && uv run pytest    # 334 tests pass
+cargo test                  # 30 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.
