@@ -16,7 +16,8 @@ completed, moved or abandoned.
 - **Tasks 1 to 14 done.** Task 13 resolved the known issues and debt, and prepared for
   Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
   `use external` natives run, and the yield guard covers values with no recorded type.
-  `vm.step` advances one iteration per call, and `vm.arena_peak_bytes` shows arena use.
+  `vm.step` advances one iteration per call, `vm.arena_peak_bytes` shows arena use, and
+  `vm.private_data` reads private fields.
   The version is 0.1.0.
 - **Migration.** `docs/architecture/MIGRATION_V0_2_3.md` is the plan. `src/compat.rs`
   holds the changed calls, `src/canaries.rs` pins 0.2.2 behaviours, and every
@@ -37,11 +38,10 @@ migration plan. Publishing 0.1.0 to PyPI is the operator's decision.
 
 ## Open
 
-- **Blocked on Keleusma, requested in `pykeleusma-20261025-migration-prep`.** Reading
-  the old module's private values at a swap. Seeding composite private fields.
-  Type-generic instances and const-generic enum inputs. The `rodata` accessor that
-  PR 517 makes necessary. Each would need the binding to read Keleusma's private memory
-  without an API, which would be unsound.
+- **Blocked on Keleusma, requested.** Seeding composite private fields, which would
+  need the binding to write Keleusma's internal state. Type-generic structs and
+  const-generic enums as inputs, which the VM mishandles. The `rodata` accessor, which
+  only 0.2.3 with PR 517 needs.
 - **Empirical arena margin.** It covers a shortfall in Keleusma 0.2.2's own sizing, is
   measured rather than proven, and is now observable through `vm.arena_peak_bytes`.
   Exhaustion raises `VMError`. A canary fails if Keleusma fixes its footprint.
@@ -49,7 +49,7 @@ migration plan. Publishing 0.1.0 to PyPI is the operator's decision.
   defect. PR 517, reported merged in `v023-20261025-pr517-merged-py`, addresses yields.
 - **With `v0.2.3`.** Unanswered requests `pykeleusma-20261025-dynamic-host-findings`,
   `pykeleusma-20261025-book-coverage-findings` with its correction, and
-  `pykeleusma-20261025-migration-prep`.
+  `pykeleusma-20261025-migration-prep` and `pykeleusma-20261025-private-array`.
 
 ## Environment
 
@@ -78,8 +78,8 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 394 tests pass
-cargo test                  # 47 Rust tests pass
+uv sync && uv run pytest    # 400 tests pass
+cargo test                  # 49 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

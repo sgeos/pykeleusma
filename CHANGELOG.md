@@ -11,6 +11,8 @@ All notable changes are recorded here. The format follows
   imported with `use external` run, attested with `keleusma.Native(f,
   max_invocations=n)`. `vm.step(value)` advances a stream one iteration in a single
   call, and the PyGame example uses it. `vm.arena_peak_bytes` shows arena use.
+  `vm.private_data` reads private fields, so scalar state can be carried across a
+  swap, and a type-generic struct may now leave the script as its fields.
 
 - Known issues, technical debt and readiness for Keleusma 0.2.3, roadmap task 13.
   Opaque host values, through which any Python object passes, and `Multiword<N, F>` big

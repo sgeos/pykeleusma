@@ -198,7 +198,7 @@ def test_a_refined_newtype_is_refused_coming_in() -> None:
         ("fn main(o: Option<Option<Word>>) -> Word { 1 }", "nested option"),
         (
             "struct Box<T> { v: T }\nfn main(b: Box<Word>) -> Word { 1 }",
-            "with type arguments",
+            "type-generic struct",
         ),
     ],
 )
@@ -233,3 +233,17 @@ def test_a_const_generic_enum_leaves_the_script_but_cannot_come_in() -> None:
     )
     with pytest.raises(TypeError, match="const-generic enum"):
         keleusma.VM(echo).call("B")
+
+
+def test_a_type_generic_struct_leaves_the_script_as_its_fields() -> None:
+    # Keleusma 0.2.2 lays out a script-built instance as its substituted fields, but
+    # does not read a host-built one that way, so it is output only.
+    box = "struct Box<T> { v: T }\n"
+    assert _call(
+        keleusma.compile(box + "fn main(x: Word) -> Box<Word> { Box { v: x } }"), 5
+    ) == {"v": 5}
+    pair = keleusma.compile(
+        "struct Pair<A, B> { a: A, b: B }\n"
+        'fn main(x: Word) -> (Word, Pair<Word, Text>) { (x, Pair { a: x, b: "hi" }) }'
+    )
+    assert _call(pair, 5) == (5, {"a": 5, "b": "hi"})

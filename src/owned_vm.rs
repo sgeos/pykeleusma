@@ -434,6 +434,35 @@ impl OwnedVm {
         self.install(module, native_wcmu, initial)
     }
 
+    /// A copy of each of the running module's `count` private slots, read from the
+    /// arena between runs, or `None` if the persistent region cannot hold them.
+    ///
+    /// Keleusma 0.2.2 has no accessor for private slots. Its own documentation of
+    /// `Vm::private_slot_count` states that they live in the arena's persistent region
+    /// starting at `persistent_ptr()`, as `count` consecutive `GenericValue`s, and its
+    /// `read_data_slot` reads them exactly so. Every slot is initialised to `Unit` at
+    /// construction and at a swap and only ever replaced by another valid value.
+    /// KELEUSMA-0.2.2: an accessor from Keleusma would replace this read, and a test
+    /// in this file fails if the layout changes.
+    pub fn private_slots(&self, count: usize) -> Option<Vec<Value>> {
+        if count == 0 {
+            return Some(Vec::new());
+        }
+        let arena = self.cell.borrow_owner();
+        let bytes = count.checked_mul(std::mem::size_of::<Value>())?;
+        if arena.persistent_capacity() < bytes {
+            return None;
+        }
+        let base = arena.persistent_ptr().as_ptr().cast::<Value>().cast_const();
+        // SAFETY: the region holds `count` initialised, aligned values, as above, and
+        // `&self` means no run is in progress, so nothing writes to them while they are
+        // cloned. Cloning a flat composite copies its handle, not its body.
+        let slots = (0..count)
+            .map(|i| unsafe { (*base.add(i)).clone() })
+            .collect();
+        Some(slots)
+    }
+
     /// The opaque value at `index` in the VM's registry, which a flat composite's
     /// opaque field names. Keleusma keeps the registry private and resolves an index
     /// only through `Vm::decode`, so the index is decoded as a value.
@@ -609,6 +638,23 @@ mod tests {
         for source in WORD_STREAMS {
             drive(source, 0, iterations, &Value::Int);
         }
+    }
+
+    #[test]
+    fn private_slots_read_back_what_the_script_wrote() {
+        // Also a canary for the layout `private_slots` relies on, and run under Miri.
+        let source = "private data d { n: Word, f: Float }\n\
+                      loop main(e: Word) -> Word { d.n = e * 3; d.f = 1.5; let x = yield d.n; x }";
+        let mut vm = OwnedVm::new(module(source), 0, &[]).expect("new");
+        let before = vm.private_slots(2).expect("slots");
+        assert!(matches!(before.as_slice(), [Value::Unit, Value::Unit]));
+        vm.call(&[Value::Int(7)]).expect("call");
+        let after = vm.private_slots(2).expect("slots");
+        assert!(
+            matches!(after.as_slice(), [Value::Int(21), Value::Float(f)] if *f == 1.5),
+            "{after:?}"
+        );
+        assert!(vm.private_slots(1_000_000).is_none());
     }
 
     #[test]
