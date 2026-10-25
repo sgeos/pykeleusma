@@ -51,14 +51,16 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
 
-use crate::compile::{Boundary, Module};
-use crate::convert::{ReadContext, to_py, to_value};
-use crate::natives::{ErrorSlot, Registry, Slot, closure};
+use crate::compile::{Boundary, Module, SignedImage};
+use crate::convert::{ReadContext, to_py, to_py_untyped, to_value, to_value_untyped};
+use crate::libraries::Library;
+use crate::natives::{self, ErrorSlot, Registry, Slot, closure};
 use crate::owned_vm::{OwnedVm, OwnedVmError};
-use crate::types::{Declared, EntrySignature, Ty};
+use crate::types::{Declared, Ty};
 
 pyo3::import_exception!(keleusma._errors, VerifyError);
 pyo3::import_exception!(keleusma._errors, VMError);
+pyo3::import_exception!(keleusma._errors, LoadError);
 
 /// The Python exception for a Keleusma VM error.
 ///
@@ -68,6 +70,9 @@ pyo3::import_exception!(keleusma._errors, VMError);
 pub fn vm_error(error: &VmError) -> PyErr {
     match error {
         VmError::VerifyError(message) => VerifyError::new_err(message.clone()),
+        // Keleusma reports malformed bytes and a signature that verifies against no
+        // trusted key as a load error.
+        VmError::LoadError(load) => LoadError::new_err(format!("{load:?}")),
         other => VMError::new_err(format!("{other:?}")),
     }
 }
@@ -168,18 +173,39 @@ pub struct VM {
     /// The module's shared `data` block, owned here for the VM's whole life and lent
     /// to Keleusma on every call. See "Shared data" in the module documentation.
     shared: Vec<u8>,
+    /// The bundled libraries registered at construction, whose natives persist across
+    /// a hot swap like every other registration.
+    libraries: Vec<Library>,
+    /// Whether the VM is suspended at a yield, where a hot swap is not allowed.
+    suspended: bool,
 }
 
 #[pymethods]
 impl VM {
     #[new]
-    #[pyo3(signature = (module, *, argument_bytes = crate::DEFAULT_ARGUMENT_BYTES, natives = None))]
+    #[pyo3(signature = (
+        module, *, argument_bytes = crate::DEFAULT_ARGUMENT_BYTES, natives = None,
+        libraries = None,
+    ))]
     fn new(
         module: PyRef<'_, Module>,
         argument_bytes: usize,
         natives: Option<&Bound<'_, PyAny>>,
+        libraries: Option<Vec<String>>,
     ) -> PyResult<Self> {
+        let libraries = libraries
+            .unwrap_or_default()
+            .iter()
+            .map(|name| {
+                Library::named(name).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "unknown library `{name}`; the libraries are math, audio and shell"
+                    ))
+                })
+            })
+            .collect::<PyResult<Vec<Library>>>()?;
         let names = module.inner().native_names.clone();
+        module.check_signature_route()?;
         let boundary = module.boundary().clone();
         if let Some(external) = names
             .iter()
@@ -199,6 +225,7 @@ impl VM {
                     callable: None,
                     wcet: DEFAULT_NATIVE_WCET,
                     wcmu_bytes: DEFAULT_NATIVE_WCMU_BYTES,
+                    library: false,
                 };
                 (name.clone(), slot)
             })
@@ -228,15 +255,61 @@ impl VM {
             .any(|chunk| chunk.block_type == BlockType::Stream);
         // `Vm::new` consumes the module, so the VM takes a copy and the Python module
         // stays usable for further VMs.
-        let mut vm = OwnedVm::new(module.inner().clone(), argument_bytes, &native_wcmu)
-            .map_err(construction_error)?;
+        let mut vm = match module.signed() {
+            // A module loaded from signed bytes is built through Keleusma's signed
+            // loader, which verifies the signature again and keeps the keys as the
+            // VM's trust matrix.
+            Some(SignedImage {
+                bytes: Some(bytes),
+                keys,
+            }) => OwnedVm::new_signed(module.inner(), bytes, keys, argument_bytes, &native_wcmu),
+            // A decrypted module was verified while decrypting. It is built normally
+            // and its keys become the trust matrix, as in Keleusma's encrypted loader.
+            Some(SignedImage { bytes: None, keys }) => {
+                OwnedVm::new(module.inner().clone(), argument_bytes, &native_wcmu).map(|mut vm| {
+                    for key in keys {
+                        vm.register_verifying_key(*key);
+                    }
+                    vm
+                })
+            }
+            None => OwnedVm::new(module.inner().clone(), argument_bytes, &native_wcmu),
+        }
+        .map_err(construction_error)?;
         let registry: Registry = Rc::new(RefCell::new(slots));
         let native_error: ErrorSlot = Rc::new(RefCell::new(None));
-        for (name, wcet, wcmu_bytes) in bounds {
-            let decl = boundary.natives.get(&name).cloned();
+        for (name, _, _) in &bounds {
+            let decl = boundary.natives.get(name).cloned();
             let func = closure(name.clone(), decl, registry.clone(), native_error.clone());
-            vm.register_native(&name, func);
-            vm.set_native_bounds(&name, wcet, wcmu_bytes)
+            vm.register_native(name, func);
+        }
+        // A library replaces the binding's closure for each native it provides, except
+        // where the host passed its own callable for that name, which is restored.
+        for &library in &libraries {
+            vm.register_library(library);
+            for name in library.native_names() {
+                let host_supplied = registry
+                    .borrow()
+                    .get(&name)
+                    .map(|slot| slot.callable.is_some());
+                match host_supplied {
+                    Some(true) => {
+                        let decl = boundary.natives.get(&name).cloned();
+                        let func =
+                            closure(name.clone(), decl, registry.clone(), native_error.clone());
+                        vm.register_native(&name, func);
+                    }
+                    Some(false) => {
+                        if let Some(slot) = registry.borrow_mut().get_mut(&name) {
+                            slot.library = true;
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        for (name, wcet, wcmu_bytes) in &bounds {
+            vm.set_native_bounds(name, *wcet, *wcmu_bytes)
                 .map_err(|e| vm_error(&e))?;
         }
         // The arena was sized with these bounds, so this confirms the sizing rather
@@ -252,6 +325,8 @@ impl VM {
             registry,
             native_error,
             shared,
+            libraries,
+            suspended: false,
         })
     }
 
@@ -280,13 +355,177 @@ impl VM {
             wcet.unwrap_or(old_wcet),
             wcmu_bytes.unwrap_or(old_wcmu),
         )?;
-        if let Some(slot) = self.registry.borrow_mut().get_mut(name) {
-            slot.callable = Some(function.clone().unbind());
+        let was_library = {
+            let mut registry = self.registry.borrow_mut();
+            let slot = registry.get_mut(name);
+            let was_library = slot.as_ref().is_some_and(|slot| slot.library);
+            if let Some(slot) = slot {
+                slot.callable = Some(function.clone().unbind());
+                slot.library = false;
+            }
+            was_library
+        };
+        // A library's implementation replaced the binding's closure, so a Python
+        // callable for the same name needs the closure back.
+        if was_library {
+            let decl = self.boundary.natives.get(name).cloned();
+            let func = closure(
+                name.to_string(),
+                decl,
+                self.registry.clone(),
+                self.native_error.clone(),
+            );
+            self.vm.register_native(name, func);
         }
         Ok(())
     }
 
-    /// Declare the worst-case time, in Keleusma's nominal cost units, and arena memory,
+    /// Replace the running module with `module`, as the book's chapter 37 describes.
+    ///
+    /// Allowed only at an iteration boundary: before the first call, after a `Reset` or
+    /// a `Finished`, or after `reset()`. Raises `keleusma.VMError` while the VM is
+    /// suspended at a yield. Keleusma verifies the new module against this VM's arena
+    /// first, raising `keleusma.VerifyError` and keeping the old module if it does not
+    /// fit, and it requires the same data segment schema as the old module.
+    ///
+    /// After the swap the new module is driven from `call`. Its private data starts as
+    /// `()`, as in a fresh VM. Native registrations persist, and a native the new module
+    /// names that is not yet registered must be registered before the next call.
+    fn replace_module(&mut self, module: PyRef<'_, Module>) -> PyResult<()> {
+        if self.suspended {
+            return Err(VMError::new_err(
+                "a hot swap is allowed only at an iteration boundary, after `Reset` or \
+                 `Finished`, not while the script is suspended at a yield",
+            ));
+        }
+        module.check_signature_route()?;
+        let boundary = module.boundary().clone();
+        if let Some(external) = module
+            .inner()
+            .native_names
+            .iter()
+            .find(|name| boundary.natives.get(*name).is_some_and(|d| d.external))
+        {
+            return Err(VerifyError::new_err(format!(
+                "the native `{external}` is declared `use external`, which pykeleusma 0.1.0 \
+                 does not support"
+            )));
+        }
+        let native_wcmu: Vec<u32> = {
+            let registry = self.registry.borrow();
+            module
+                .inner()
+                .native_names
+                .iter()
+                .map(|name| {
+                    registry
+                        .get(name)
+                        .map_or(DEFAULT_NATIVE_WCMU_BYTES, |s| s.wcmu_bytes)
+                })
+                .collect()
+        };
+        match module.signed() {
+            // Signed bytes are verified against this VM's trust matrix, the keys it
+            // was built with and those added by `register_verifying_key`.
+            Some(SignedImage {
+                bytes: Some(bytes), ..
+            }) => self
+                .vm
+                .replace_module_signed(module.inner(), bytes, &native_wcmu),
+            // A decrypted module has no signed bytes left to check against this VM's
+            // trust matrix, so swapping it in would bypass that matrix.
+            Some(SignedImage { bytes: None, .. }) => {
+                return Err(VerifyError::new_err(
+                    "an encrypted module cannot be hot-swapped, because its signature \
+                     covers the encrypted form and cannot be checked against this VM's \
+                     trust matrix after decryption; build a new VM from it instead",
+                ));
+            }
+            None => self.vm.replace_module(module.inner().clone(), &native_wcmu),
+        }
+        .map_err(|e| match e {
+            // Keleusma's message points to its unchecked swap, which the binding does
+            // not expose, because it skips the check that keeps shared data meaningful.
+            VmError::VerifyError(message) if message.starts_with("schema mismatch") => {
+                VerifyError::new_err(format!(
+                    "{message}; pykeleusma does not expose the unchecked swap, so build \
+                     a new VM from the module instead"
+                ))
+            }
+            other => vm_error(&other),
+        })?;
+        // The new module may name natives the old one did not. Each gets a slot and a
+        // closure, satisfied by a registered library where one provides it.
+        let provided: Vec<String> = self
+            .libraries
+            .iter()
+            .flat_map(|l| l.native_names())
+            .collect();
+        for name in &module.inner().native_names {
+            if self.registry.borrow().contains_key(name) {
+                continue;
+            }
+            let library = provided.contains(name);
+            self.registry.borrow_mut().insert(
+                name.clone(),
+                Slot {
+                    callable: None,
+                    wcet: DEFAULT_NATIVE_WCET,
+                    wcmu_bytes: DEFAULT_NATIVE_WCMU_BYTES,
+                    library,
+                },
+            );
+            if !library {
+                let decl = boundary.natives.get(name).cloned();
+                let func = closure(
+                    name.clone(),
+                    decl,
+                    self.registry.clone(),
+                    self.native_error.clone(),
+                );
+                self.vm.register_native(name, func);
+            }
+        }
+        self.has_stream = module
+            .inner()
+            .chunks
+            .iter()
+            .any(|chunk| chunk.block_type == BlockType::Stream);
+        let size = self.vm.shared_data_bytes();
+        if self.shared.len() != size {
+            self.shared = vec![0u8; size];
+        }
+        self.boundary = boundary;
+        self.failed = false;
+        // The arena was checked against the new module above, so this confirms it with
+        // Keleusma's own analysis of the registered natives' bounds.
+        self.vm.verify_resources().map_err(|e| vm_error(&e))?;
+        Ok(())
+    }
+
+    /// Trust `key`, a 32-byte Ed25519 public key, for signed modules swapped in later
+    /// with `replace_module`, as the book's chapter 36 describes for a host that boots
+    /// from an unsigned baseline and accepts only signed updates.
+    fn register_verifying_key(&mut self, key: &[u8]) -> PyResult<()> {
+        self.vm
+            .register_verifying_key(crate::crypto::verifying_key(key)?);
+        Ok(())
+    }
+
+    /// Recover after a runtime error, as the book's chapter 34 describes.
+    ///
+    /// Clears the operand stack, the call frames and the arena, keeps the private and
+    /// shared data, and makes the VM usable again, so the next `call` starts the entry
+    /// point afresh. The host attests by calling it that it has inspected the error and
+    /// decided to retry.
+    fn reset(&mut self) {
+        self.vm.reset_after_error();
+        self.native_error.borrow_mut().take();
+        self.failed = false;
+        self.suspended = false;
+    }
+
+    /// Declare the worst-case time, in nominal cycles, and arena memory,
     /// in bytes, of one call of the native `name`.
     ///
     /// A memory bound this VM's arena cannot hold is refused with
@@ -329,11 +568,11 @@ impl VM {
         self.vm.arena_capacity()
     }
 
-    /// The worst-case execution time of one iteration of a `loop main`, in Keleusma's
-    /// nominal cost units, or `None` for a module without a stream.
+    /// The worst-case execution time of one iteration of a `loop main`, in nominal
+    /// cycles, or `None` for a module without a stream.
     ///
-    /// The units are unitless, on the scale of Keleusma's per-instruction costs, not
-    /// cycles or seconds. The figure covers the script and the declared bounds of any
+    /// Nominal cycles are the per-instruction costs of Keleusma's nominal cost model,
+    /// not the cycles of any particular processor, and not seconds. The figure covers the script and the declared bounds of any
     /// natives, never Python or the binding's own conversions.
     #[getter]
     fn wcet_per_iteration(&self) -> PyResult<Option<u32>> {
@@ -378,24 +617,32 @@ impl VM {
         shared: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.check_usable()?;
+        let values = match &self.boundary.signature {
+            Some(signature) => {
+                if args.len() != signature.params.len() {
+                    return Err(PyTypeError::new_err(format!(
+                        "main takes {} argument(s), got {}",
+                        signature.params.len(),
+                        args.len()
+                    )));
+                }
+                args.iter()
+                    .zip(&signature.params)
+                    .enumerate()
+                    .map(|(index, (arg, param))| {
+                        let ty = declared(param, &format!("argument {}", index + 1))?;
+                        to_value(&arg, ty)
+                    })
+                    .collect::<PyResult<Vec<_>>>()?
+            }
+            // A module loaded from bytes has no declared types, so its arguments
+            // convert as untyped scalars, and Keleusma checks their count and tags.
+            None => args
+                .iter()
+                .map(|arg| to_value_untyped(&arg))
+                .collect::<PyResult<Vec<_>>>()?,
+        };
         let host = self.sync_shared(shared)?;
-        let signature = self.signature()?;
-        if args.len() != signature.params.len() {
-            return Err(PyTypeError::new_err(format!(
-                "main takes {} argument(s), got {}",
-                signature.params.len(),
-                args.len()
-            )));
-        }
-        let values = args
-            .iter()
-            .zip(&signature.params)
-            .enumerate()
-            .map(|(index, (arg, param))| {
-                let ty = declared(param, &format!("argument {}", index + 1))?;
-                to_value(&arg, ty)
-            })
-            .collect::<PyResult<Vec<_>>>()?;
         let outcome = self.vm.call_with_shared(&mut self.shared, &values);
         let state = self.state(py, outcome)?;
         self.flush_shared(py, host)?;
@@ -417,8 +664,10 @@ impl VM {
         shared: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.check_usable()?;
-        let ty = declared(&self.signature()?.resume, "resume")?;
-        let input = to_value(value, ty)?;
+        let input = match &self.boundary.signature {
+            Some(signature) => to_value(value, declared(&signature.resume, "resume")?)?,
+            None => to_value_untyped(value)?,
+        };
         let host = self.sync_shared(shared)?;
         let outcome = self.vm.resume_with_shared(&mut self.shared, input);
         let state = self.state(py, outcome)?;
@@ -469,13 +718,6 @@ impl VM {
 }
 
 impl VM {
-    fn signature(&self) -> PyResult<&EntrySignature> {
-        self.boundary
-            .signature
-            .as_ref()
-            .ok_or_else(|| PyTypeError::new_err("the module has no `main`"))
-    }
-
     fn check_usable(&self) -> PyResult<()> {
         if self.failed {
             return Err(VMError::new_err(
@@ -487,7 +729,7 @@ impl VM {
             .registry
             .borrow()
             .iter()
-            .find(|(_, slot)| slot.callable.is_none())
+            .find(|(_, slot)| slot.callable.is_none() && !slot.library)
         {
             return Err(VMError::new_err(format!(
                 "the native `{name}` is not registered; pass it in `natives=` or call \
@@ -563,13 +805,18 @@ impl VM {
         py: Python<'py>,
         outcome: Result<VmState, VmError>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        // An exception a native raised but the script then handled, through the
+        // native-error construct, belongs to no failure and is dropped.
+        let raised = self.native_error.borrow_mut().take();
+        self.suspended = matches!(outcome, Ok(VmState::Yielded(_)));
         let state = match outcome {
             Ok(state) => state,
             Err(VmError::NotSuspended) => return Err(vm_error(&VmError::NotSuspended)),
             Err(error) => {
                 self.failed = true;
-                // A native's own exception reaches the caller unchanged.
-                if let Some(raised) = self.native_error.borrow_mut().take() {
+                // A native's own exception reaches the caller unchanged. One the
+                // script handled earlier in the same run belongs to no failure.
+                if let Some(raised) = raised.filter(|_| natives::carries_stored_exception(&error)) {
                     return Err(raised);
                 }
                 return Err(vm_error(&error));
@@ -587,12 +834,14 @@ impl VM {
                 ));
             }
         };
-        let ty = declared(&self.signature()?.ret, "the result")?;
         let ctx = ReadContext {
             arena: self.vm.arena(),
             widths: self.boundary.widths,
         };
-        let converted = to_py(py, &value, ty, &ctx)?;
+        let converted = match &self.boundary.signature {
+            Some(signature) => to_py(py, &value, declared(&signature.ret, "the result")?, &ctx)?,
+            None => to_py_untyped(py, &value, &ctx)?,
+        };
         states.getattr(class)?.call1((converted,))
     }
 }

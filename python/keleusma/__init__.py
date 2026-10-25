@@ -14,6 +14,8 @@ from keleusma._errors import (
     CompileError,
     KeleusmaError,
     LexError,
+    LoadError,
+    NativeError,
     ParseError,
     SourceError,
     VerifyError,
@@ -22,6 +24,7 @@ from keleusma._errors import (
 from keleusma._fixed import Fixed
 from keleusma._native import DEFAULT_NATIVE_WCET, DEFAULT_NATIVE_WCMU_BYTES, Native
 from keleusma._state import Finished, Reset, State, Yielded
+from keleusma._values import Variant
 from keleusma._keleusma import (
     BYTECODE_VERSION,
     DEFAULT_ARGUMENT_BYTES,
@@ -29,7 +32,11 @@ from keleusma._keleusma import (
     VM,
     Module,
     __version__,
+    library_signatures,
+    load_module,
     compile,  # Like re.compile, it shadows the builtin only inside this package.
+    encryption_public_key,
+    signing_public_key,
 )
 
 __all__ = [
@@ -44,6 +51,8 @@ __all__ = [
     "Fixed",
     "KeleusmaError",
     "LexError",
+    "LoadError",
+    "NativeError",
     "Native",
     "Module",
     "ParseError",
@@ -51,8 +60,13 @@ __all__ = [
     "SourceError",
     "State",
     "VMError",
+    "Variant",
     "VerifyError",
     "Yielded",
     "__version__",
     "compile",
+    "encryption_public_key",
+    "library_signatures",
+    "load_module",
+    "signing_public_key",
 ]

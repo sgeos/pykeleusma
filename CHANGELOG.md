@@ -7,6 +7,18 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Coverage of the Keleusma book, roadmap task 12. Structs convert to and from `dict`,
+  enums to and from `keleusma.Variant`, and options to `None` or the value, for
+  arguments, results, yields and natives. `keleusma.NativeError(code, message)` reports
+  a native error a script can handle. `vm.reset()` recovers after a runtime error.
+  `VM(..., libraries=[...])` and `keleusma.library_signatures` offer Keleusma's bundled
+  `math`, `audio` and `shell` natives. `Module.to_bytes`, `Module.to_signed_bytes`,
+  `Module.is_signed`, `Module.has_declared_types`, `keleusma.load_module`,
+  `keleusma.signing_public_key`, `keleusma.encryption_public_key` and `LoadError` cover
+  precompiled, signed and encrypted bytecode. `vm.replace_module` and
+  `vm.register_verifying_key` provide hot swap with a trust matrix. The crate's ten
+  example scripts run in `tests/test_book.py`.
+
 - Shared `data` blocks, owned by the VM in Rust and lent to Keleusma on each call.
   `shared=` on `vm.call`, `vm.resume` and `vm.stream` syncs the block from a Python
   buffer and flushes it back after the call. `vm.shared_data_bytes` and
@@ -26,8 +38,8 @@ All notable changes are recorded here. The format follows
 - `vm.stream(*args, inputs=None)`, a generator yielding `Yielded` and `Reset` states and
   returning the `Finished` value, with resume inputs from an iterable or from `send`.
 
-- `vm.wcet_per_iteration`, Keleusma's worst-case time for one stream iteration in its
-  nominal cost units, or `None` for a module without a stream, with the units and the
+- `vm.wcet_per_iteration`, Keleusma's worst-case time for one stream iteration in
+  nominal cycles, or `None` for a module without a stream, with the units and the
   coverage of it and of `vm.arena_capacity` documented.
 
 - `vm.call(*args)` and `vm.resume(value)`, returning the frozen dataclasses
@@ -59,6 +71,15 @@ All notable changes are recorded here. The format follows
   repository.
 
 ### Fixed
+
+- The units of `vm.wcet_per_iteration` and of native time bounds are now documented as
+  nominal cycles, from Keleusma's nominal cost model, rather than as unitless units
+  that are not cycles.
+- A Python native's exception other than `keleusma.NativeError` can no longer be caught
+  by a script's native-error handler, which Keleusma would otherwise give the code -1.
+- Workarounds for three Keleusma 0.2.2 hot swap defects. The binding checks a new
+  module's arena needs by its construction-time rule, installs a verified signed module that Keleusma's own signed
+  swap cannot, and refuses an unsigned swap once the VM trusts a key.
 
 - An arena sized by Keleusma's footprint alone failed on the resume after a stream's
   first `Reset`. The arena now includes a regrowth margin, as the design records.

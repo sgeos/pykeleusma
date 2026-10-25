@@ -17,7 +17,14 @@ crate-type = ["cdylib"]
 [dependencies]
 # Pinned exactly. The binding targets the published Keleusma 0.2.2 and moves to a
 # later release deliberately, because 0.2.3 changes BYTECODE_VERSION from 1 to 2.
-keleusma = "=0.2.2"
+# `shell` compiles in Keleusma's Shell library, which a script reaches only if its host
+# passes `libraries=("shell",)`, since it can run commands and touch files.
+# `signatures` and `encryption` provide the signed and encrypted modules of the book's
+# chapters 26 and 36. The cryptography is Keleusma's and its dependencies', never ours.
+keleusma = { version = "=0.2.2", features = ["shell", "signatures", "encryption"] }
+# The Ed25519 key types Keleusma's signing API takes, at the major version Keleusma
+# uses, so Cargo unifies the two.
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "zeroize"] }
 # The stable ABI from Python 3.12, so one wheel per platform serves every later
 # Python version.
 pyo3 = { version = "0.30.1", features = ["abi3-py312"] }

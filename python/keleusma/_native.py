@@ -15,7 +15,7 @@ Keleusma's default bounds, or a `Native` with explicit ones.
 from collections.abc import Callable
 from dataclasses import dataclass
 
-#: Keleusma's default worst-case time for a native call, in its nominal cost units.
+#: Keleusma's default worst-case time for a native call, in nominal cycles.
 DEFAULT_NATIVE_WCET = 10
 #: Keleusma's default worst-case arena use for a native call, in bytes.
 DEFAULT_NATIVE_WCMU_BYTES = 0
@@ -25,7 +25,7 @@ DEFAULT_NATIVE_WCMU_BYTES = 0
 class Native:
     """A native's callable together with the bounds declared for it.
 
-    `wcet` is the worst-case time of one call in Keleusma's nominal cost units, and
+    `wcet` is the worst-case time of one call in nominal cycles, and
     `wcmu_bytes` the worst-case arena memory one call uses, which includes a composite
     value the native returns, since Keleusma copies that into the arena. `None` takes
     Keleusma's default for that bound.

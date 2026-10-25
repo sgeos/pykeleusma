@@ -56,11 +56,12 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use keleusma::Arena;
-use keleusma::bytecode::{Module, Value};
+use keleusma::bytecode::{LoadError, Module, Value};
 use keleusma::verify::module_runtime_footprint;
 use keleusma::vm::{
     Vm, VmError, VmState, auto_arena_capacity_for, required_persistent_capacity_for,
 };
+use keleusma::wire_format;
 use self_cell::self_cell;
 
 /// The VM type the arena owner lends to. The bytecode lifetime is `'static` because
@@ -190,6 +191,11 @@ impl ArenaPlan {
 pub struct OwnedVm {
     cell: ArenaAndVm,
     plan: ArenaPlan,
+    /// The keys signed hot swaps verify against, the VM's trust matrix. Keleusma keeps
+    /// its own copy, but in 0.2.2 its signed swap cannot install a signed module and
+    /// its plain swap ignores the matrix, so the binding enforces the matrix itself,
+    /// as [`Self::replace_module`] explains.
+    trusted: Vec<ed25519_dalek::VerifyingKey>,
 }
 
 impl OwnedVm {
@@ -203,6 +209,31 @@ impl OwnedVm {
         native_wcmu: &[u32],
     ) -> Result<Self, OwnedVmError> {
         let plan = ArenaPlan::for_module(&module, argument_bytes, native_wcmu)?;
+        Self::build(plan, Vec::new(), |arena| Vm::new(module, arena))
+    }
+
+    /// Like [`Self::new`], but through Keleusma's signed loader, which verifies the
+    /// signature of `bytes` against `keys` before building the VM, and copies the keys
+    /// onto the VM as its trust matrix for later signed hot swaps. `module` is the same
+    /// module decoded, used only to size the arena.
+    pub fn new_signed(
+        module: &Module,
+        bytes: &[u8],
+        keys: &[ed25519_dalek::VerifyingKey],
+        argument_bytes: usize,
+        native_wcmu: &[u32],
+    ) -> Result<Self, OwnedVmError> {
+        let plan = ArenaPlan::for_module(module, argument_bytes, native_wcmu)?;
+        Self::build(plan, keys.to_vec(), |arena| {
+            Vm::load_signed_bytes(bytes, arena, keys)
+        })
+    }
+
+    fn build(
+        plan: ArenaPlan,
+        trusted: Vec<ed25519_dalek::VerifyingKey>,
+        make: impl for<'a> FnOnce(&'a Arena) -> Result<BorrowingVm<'a>, VmError>,
+    ) -> Result<Self, OwnedVmError> {
         let capacity = plan.capacity;
         let persistent = plan.persistent;
         let mut arena = Arena::try_with_capacity(capacity)
@@ -213,10 +244,13 @@ impl OwnedVm {
                 capacity,
                 persistent,
             })?;
-        let cell =
-            ArenaAndVm::try_new(arena, |arena| Vm::new(module, arena)).map_err(OwnedVmError::Vm)?;
+        let cell = ArenaAndVm::try_new(arena, make).map_err(OwnedVmError::Vm)?;
         LIVE.fetch_add(1, Ordering::Relaxed);
-        Ok(Self { cell, plan })
+        Ok(Self {
+            cell,
+            plan,
+            trusted,
+        })
     }
 
     /// The arena's total capacity in bytes.
@@ -262,7 +296,7 @@ impl OwnedVm {
     }
 
     /// Keleusma's worst-case execution time for one stream iteration, in its nominal
-    /// cost units, including the declared bounds of any registered natives.
+    /// cycles, including the declared bounds of any registered natives.
     pub fn wcet_per_iteration(&self) -> Result<u32, VmError> {
         self.cell
             .with_dependent(|_arena, vm| vm.wcet_per_iteration())
@@ -287,6 +321,110 @@ impl OwnedVm {
     ) -> Result<(), VmError> {
         self.cell
             .with_dependent_mut(|_arena, vm| vm.set_native_bounds(name, wcet, wcmu_bytes))
+    }
+
+    /// Register one of Keleusma's bundled libraries.
+    pub fn register_library(&mut self, library: crate::libraries::Library) {
+        self.cell
+            .with_dependent_mut(|_arena, vm| library.register(vm));
+    }
+
+    /// Reset after a runtime error, clearing the stack, the frames and the arena while
+    /// keeping the data segment, so the next call starts the entry point afresh.
+    pub fn reset_after_error(&mut self) {
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.reset_after_error());
+    }
+
+    /// Replace the module at an iteration boundary, as the book's chapter 37 describes,
+    /// with every private data slot of the new module starting as `()`, the state a
+    /// fresh VM starts in. Keleusma verifies the new module first and keeps the old one
+    /// if verification fails.
+    ///
+    /// `native_wcmu` holds the declared memory bound of each native the new module
+    /// names, in its `native_names` order.
+    ///
+    /// An unsigned module is refused once the VM trusts any key, the policy Keleusma's
+    /// signed loader states, because a host that registered keys requires signed code.
+    /// Keleusma 0.2.2's own `replace_module` does not apply that policy.
+    pub fn replace_module(&mut self, module: Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+        if !self.trusted.is_empty() {
+            return Err(VmError::from(LoadError::InvalidSignature));
+        }
+        self.install(module, native_wcmu)
+    }
+
+    fn install(&mut self, module: Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+        self.check_fits(&module, native_wcmu)?;
+        let initial = Self::fresh_private_data(&module);
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.replace_module(module, initial))
+    }
+
+    /// Like [`Self::replace_module`], for a module decoded from signed `bytes`, whose
+    /// signature is verified against this VM's trust matrix before it is installed.
+    ///
+    /// Keleusma 0.2.2's `replace_module_from_bytes` verifies the signature, then fails
+    /// on every signed module, because it keeps the signature flag on the decoded
+    /// module and its swap re-encodes the module without the signature. This applies
+    /// the same steps as Keleusma's signed loader instead, which verifies the bytes and
+    /// clears the flag on the decoded module. `module` must be decoded from `bytes`,
+    /// which `keleusma.load_module` guarantees by keeping both from one input.
+    pub fn replace_module_signed(
+        &mut self,
+        module: &Module,
+        bytes: &[u8],
+        native_wcmu: &[u32],
+    ) -> Result<(), VmError> {
+        if !wire_format::header_requires_signature(bytes) {
+            return Err(VmError::from(LoadError::InvalidSignature));
+        }
+        wire_format::verify_module_signature(bytes, &self.trusted).map_err(VmError::from)?;
+        let mut module = module.clone();
+        module.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
+        self.install(module, native_wcmu)
+    }
+
+    /// Add a key to the trust matrix that signed hot swaps verify against.
+    pub fn register_verifying_key(&mut self, key: ed25519_dalek::VerifyingKey) {
+        self.trusted.push(key);
+        self.cell
+            .with_dependent_mut(|_arena, vm| vm.register_verifying_key(key));
+    }
+
+    fn check_fits(&self, module: &Module, native_wcmu: &[u32]) -> Result<(), VmError> {
+        // Keleusma's own `replace_module` checks the new module's bounds against the
+        // arena's capacity, but without the natives' bounds and more loosely than
+        // `Vm::new`, so a module that construction would refuse can be admitted and
+        // fail with `OutOfArena` on its first call. This applies the construction-time
+        // sizing rule, margin and native bounds included, to the new module and refuses
+        // it if this arena is smaller than that rule asks.
+        let needed = ArenaPlan::for_module(module, self.plan.argument_bytes, native_wcmu)
+            .map_err(|e| VmError::VerifyError(e.to_string()))?;
+        if needed.capacity > self.arena_capacity() {
+            return Err(VmError::VerifyError(format!(
+                "the new module needs an arena of {} bytes, but this VM's arena has {}; \
+                 build the VM from the module with the larger footprint and swap the \
+                 smaller one in, since the argument budget counts on both sides",
+                needed.capacity,
+                self.arena_capacity()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Every private slot of `module` as `()`, the state a fresh VM starts in.
+    fn fresh_private_data(module: &Module) -> Vec<Value> {
+        let private_slots = module.data_layout.as_ref().map_or(0, |layout| {
+            layout
+                .slots
+                .iter()
+                .filter(|slot| {
+                    matches!(slot.visibility, keleusma::bytecode::SlotVisibility::Private)
+                })
+                .count()
+        });
+        vec![Value::Unit; private_slots]
     }
 
     /// Check the module, with the natives' current bounds, against this arena.

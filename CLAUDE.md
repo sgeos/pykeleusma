@@ -13,12 +13,14 @@ PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and t
 package is `keleusma`.
 
 **Status.** Cut on 2026-10-24. The extension builds against the published Keleusma 0.2.2.
-Tasks 1 to 11 of the first milestone are done. `keleusma.compile` works with located
+Tasks 1 to 12 of the first milestone are done. `keleusma.compile` works with located
 errors, `keleusma.VM` verifies a module and owns a correctly sized arena, values convert
 by declared type, `vm.call`, `vm.resume` and `vm.stream` run scripts, Python natives work
-with declared bounds, shared data blocks are lent as host buffers, the worst-case figures
-are readable, three examples run in tests, the README states the guarantee boundary, and
-GitHub Actions checks every push and pull request. The first milestone is
+with declared bounds, shared data blocks are kept by the VM and synced with host
+buffers, the worst-case figures are readable, three examples run in tests, the README
+states the guarantee boundary, and GitHub Actions checks every push and pull request.
+Task 12 covers what the Keleusma book describes, including structs and enums, native
+errors, libraries, signed and encrypted bytecode and hot swap. The first milestone is
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design is
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
 

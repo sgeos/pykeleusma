@@ -4,20 +4,33 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, issues from other lines and tasks 1 to 11
+## 2026-10-25, coverage of the Keleusma book, task 12
 
-**Goal.** Attend to issues raised by other lines, complete all tasks from 1 to 11,
-skipping those already done, then commit, push and merge all work.
+**Goal.** Make `pykeleusma` act as a bridge for all functionality the Keleusma book
+describes, and report anything broken. The operator also corrected the units of
+`wcet_per_iteration` to nominal cycles.
 
-**Issues from other lines.** None outstanding. The inbox was empty, and the last request,
-from `pydromon` about shared data, was answered and implemented in pull requests 12 and
-13, with a follow-up notice about the Rust-owned design.
+**Done.** Structs, enums, options and newtypes convert at the boundary. Natives report
+recoverable errors through `keleusma.NativeError`, and `vm.reset()` recovers a failed
+VM. `libraries=` offers the bundled `math`, `audio` and `shell` natives. Modules
+serialise, sign, encrypt and load, and `vm.replace_module` swaps them with a trust
+matrix. The crate's ten example scripts give their stated results. The units now read
+nominal cycles everywhere, and `pydromon` was told.
 
-**Tasks.** All of tasks 1 to 11 were already done and merged. The only change is to
-roadmap task 11's title, which still described the shared block as lent rather than kept
-by the VM in Rust and synced with a host buffer, the design since pull request 13.
+**Defects found in the binding and fixed.** A script's native-error handler caught every
+Python exception, with the code -1, which would have swallowed a `KeyboardInterrupt`.
+A native error the script handled could mask a later runtime error in the same call.
+Both have tests that fail without the fix.
 
-**Verification.** Documentation only. CI runs on the pull request.
+**Defects found in Keleusma 0.2.2, reported to `v0.2.3` and worked around.** Signed hot
+swap fails on every signed module. The plain swap ignores the trust matrix. The swap's
+resource check admits a module that construction would refuse. The FAQ says text
+doubling with `s + s` runs, and in 0.2.2 it fails with a type error. An earlier version
+of the report said the swap made no resource check at all, which was wrong and was
+corrected in a second message.
 
-**Still open.** Three unanswered messages to `v0.2.3`, the empirical arena margin, the
-partial yield guard, and a PyPI release, which needs the operator's confirmation.
+**Verification.** 325 Python tests and 29 Rust tests pass locally, with pyright, ruff,
+rustfmt and clippy clean. Seven mutations of the new safeguards were each caught. Of
+the 73 programs in the book, 41 were run, and the other 32 were not checked further.
+
+**Not supported.** Listed in `HANDOFF.md` under Open and in the design.

@@ -73,7 +73,7 @@ def main() -> None:
     mean, variance = mean_and_variance(values, vm)
     print(f"Keleusma: mean {mean:.6f}, variance {variance:.6f}")
     print(f"NumPy:    mean {values.mean():.6f}, variance {values.var():.6f}")
-    print(f"worst case per chunk: {vm.wcet_per_iteration} nominal cost units")
+    print(f"worst case per chunk: {vm.wcet_per_iteration} nominal cycles")
 
 
 if __name__ == "__main__":

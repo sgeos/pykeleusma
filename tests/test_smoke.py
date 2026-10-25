@@ -18,7 +18,11 @@ def test_the_stated_keleusma_version_matches_the_cargo_pin() -> None:
     # Both sides are derived. The pin is read from Cargo.toml and the stated value
     # from the built extension, so an upgrade that changes only one fails here.
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-    pin = manifest["dependencies"]["keleusma"]
+    dependency: object = manifest["dependencies"]["keleusma"]
+    if isinstance(dependency, dict):
+        pin: object = dependency["version"]  # pyright: ignore[reportUnknownVariableType]
+    else:
+        pin = dependency
     assert pin == "=" + keleusma.KELEUSMA_VERSION
 
 

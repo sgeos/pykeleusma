@@ -28,14 +28,19 @@ use keleusma::parser::parse;
 use keleusma::target::Target;
 use keleusma::token::Span;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 
 use crate::convert::Widths;
+use crate::crypto;
 use crate::types::{EntrySignature, NativeDecl, native_decls};
 use crate::yield_check;
+use keleusma::wire_format;
 
 pyo3::import_exception!(keleusma._errors, LexError);
 pyo3::import_exception!(keleusma._errors, ParseError);
 pyo3::import_exception!(keleusma._errors, CompileError);
+pyo3::import_exception!(keleusma._errors, LoadError);
+pyo3::import_exception!(keleusma._errors, VerifyError);
 
 /// A compiled Keleusma module, with the declared types at its entry point.
 ///
@@ -45,6 +50,21 @@ pyo3::import_exception!(keleusma._errors, CompileError);
 pub struct Module {
     inner: KeleusmaModule,
     boundary: Boundary,
+    /// For a module loaded from signed bytes, those bytes and the keys they verified
+    /// against, so a VM is built through Keleusma's signed loader and verifies again.
+    signed: Option<SignedImage>,
+}
+
+/// How a signed module was verified, and the keys it was verified against.
+#[derive(Debug, Clone)]
+pub struct SignedImage {
+    /// The signed bytes, which Keleusma's signed loader verifies again when a VM is
+    /// built. `None` for a module that was encrypted. Its signature covers the
+    /// encrypted form, which Keleusma verifies while decrypting, so the decrypted
+    /// module carries no signature of its own to verify again, exactly as in
+    /// Keleusma's own encrypted loader.
+    pub bytes: Option<Vec<u8>>,
+    pub keys: Vec<ed25519_dalek::VerifyingKey>,
 }
 
 /// What value conversion needs to know about a module, kept from compilation
@@ -69,10 +89,90 @@ impl Module {
     pub fn boundary(&self) -> &Boundary {
         &self.boundary
     }
+
+    /// The signed image, for a module loaded from signed bytes.
+    pub fn signed(&self) -> Option<&SignedImage> {
+        self.signed.as_ref()
+    }
+
+    /// Refuse a module whose source is declared `signed` but which was not loaded from
+    /// signed bytes, since Keleusma builds such a module only through its signed
+    /// loader, and its own message names Rust functions a Python host cannot call.
+    pub fn check_signature_route(&self) -> PyResult<()> {
+        let declared = self.inner.flags & wire_format::FLAG_REQUIRES_SIGNATURE != 0;
+        if declared && self.signed.is_none() {
+            return Err(VerifyError::new_err(
+                "the module is declared `signed`, so it runs only from signed bytes; \
+                 sign it with `Module.to_signed_bytes` and load the result with \
+                 `keleusma.load_module` and the matching `verifying_keys`",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[pymethods]
 impl Module {
+    /// The module as Keleusma's wire format, the bytes a `.kel.bin` file holds.
+    ///
+    /// The bytes carry no source, so a module loaded back from them with
+    /// `keleusma.load_module` converts values without declared types.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = self
+            .inner
+            .to_bytes()
+            .map_err(|e| LoadError::new_err(format!("{e:?}")))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// The module as signed wire-format bytes, signed with the Ed25519 key whose 32-byte
+    /// seed is `signing_seed`, as the book's chapter 26 describes.
+    ///
+    /// With `recipient_key`, an X25519 public key, the body is also encrypted to that
+    /// recipient, using a fresh ephemeral key from the operating system's random
+    /// source, so only the holder of the matching private key can load it.
+    #[pyo3(signature = (signing_seed, *, recipient_key = None))]
+    fn to_signed_bytes<'py>(
+        &self,
+        py: Python<'py>,
+        signing_seed: &[u8],
+        recipient_key: Option<&[u8]>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let key = crypto::signing_key(signing_seed)?;
+        let bytes = match recipient_key {
+            None => wire_format::module_to_signed_wire_bytes(&self.inner, &key),
+            Some(recipient) => {
+                let recipient = crypto::x25519_key(recipient, "a recipient key")?;
+                let ephemeral: Vec<u8> = py
+                    .import("os")?
+                    .getattr("urandom")?
+                    .call1((32,))?
+                    .extract()?;
+                let ephemeral = crypto::x25519_key(&ephemeral, "an ephemeral key")?;
+                wire_format::module_to_encrypted_signed_wire_bytes(
+                    &self.inner,
+                    &key,
+                    recipient,
+                    ephemeral,
+                )
+            }
+        }
+        .map_err(|e| LoadError::new_err(format!("{e:?}")))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Whether the module came from signed bytes.
+    #[getter]
+    fn is_signed(&self) -> bool {
+        self.signed.is_some()
+    }
+
+    /// Whether the module came from source, so values convert by declared types.
+    #[getter]
+    fn has_declared_types(&self) -> bool {
+        self.boundary.signature.is_some()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "<keleusma.Module with {} chunk(s) and {} native(s)>",
@@ -191,7 +291,96 @@ pub fn compile(py: Python<'_>, source: &str) -> PyResult<Module> {
         widths: Widths::of(&inner),
         natives: native_decls(&program, default_frac_bits),
     };
-    Ok(Module { inner, boundary })
+    Ok(Module {
+        inner,
+        boundary,
+        signed: None,
+    })
+}
+
+/// Load a module from Keleusma's wire format, such as a `.kel.bin` file.
+///
+/// Verification of the module itself happens when a VM is built from it, exactly as
+/// for a compiled module. The bytes carry no source, so the binding knows no declared
+/// types for the entry point or the natives, and converts their values as untyped
+/// scalars, refusing composites and `Fixed`.
+///
+/// A signed module, the book's chapters 26 and 36, loads only with `verifying_keys`,
+/// 32-byte Ed25519 public keys, and only if its signature verifies against one of
+/// them. An encrypted module also needs `decryption_key`, the recipient's 32-byte
+/// X25519 private key. Giving keys for a module that is not signed is refused, as
+/// Keleusma refuses it, so a host that expects signed code cannot be handed unsigned
+/// code. Raises `keleusma.LoadError` for malformed bytes and `keleusma.VerifyError`
+/// for a failed signature or a missing key.
+#[pyfunction]
+#[pyo3(signature = (data, *, verifying_keys = None, decryption_key = None))]
+pub fn load_module(
+    data: &[u8],
+    verifying_keys: Option<Vec<Vec<u8>>>,
+    decryption_key: Option<&[u8]>,
+) -> PyResult<Module> {
+    let keys = verifying_keys
+        .unwrap_or_default()
+        .iter()
+        .map(|k| crypto::verifying_key(k))
+        .collect::<PyResult<Vec<_>>>()?;
+    let (bytes, signed) = if wire_format::header_requires_encryption(data) {
+        let private = decryption_key.ok_or_else(|| {
+            VerifyError::new_err("the module is encrypted; pass `decryption_key`")
+        })?;
+        let private = crypto::x25519_key(private, "a decryption key")?;
+        if keys.is_empty() {
+            return Err(VerifyError::new_err(
+                "the module is signed; pass the `verifying_keys` it may be signed with",
+            ));
+        }
+        // Verifies the signature over the encrypted form, then decrypts.
+        let plain = wire_format::decrypt_encrypted_signed_to_signed_bytes(data, &keys, private)
+            .map_err(|e| VerifyError::new_err(format!("{e:?}")))?;
+        (plain, Some(SignedImage { bytes: None, keys }))
+    } else if decryption_key.is_some() {
+        // A host that passes a decryption key expects a confidential module, so a
+        // plaintext one is refused rather than accepted silently.
+        return Err(VerifyError::new_err(
+            "a decryption key was given, but the module is not encrypted",
+        ));
+    } else if wire_format::header_requires_signature(data) {
+        if keys.is_empty() {
+            return Err(VerifyError::new_err(
+                "the module is signed; pass the `verifying_keys` it may be signed with",
+            ));
+        }
+        wire_format::verify_module_signature(data, &keys)
+            .map_err(|e| VerifyError::new_err(format!("{e:?}")))?;
+        let image = SignedImage {
+            bytes: Some(data.to_vec()),
+            keys,
+        };
+        (data.to_vec(), Some(image))
+    } else if !keys.is_empty() {
+        return Err(VerifyError::new_err(
+            "verifying keys were given, but the module is not signed",
+        ));
+    } else {
+        (data.to_vec(), None)
+    };
+    let mut inner =
+        KeleusmaModule::from_bytes(&bytes).map_err(|e| LoadError::new_err(format!("{e:?}")))?;
+    // A decrypted module was verified during decryption, so it is built like an
+    // unsigned one, as Keleusma's own encrypted loader does.
+    if matches!(&signed, Some(SignedImage { bytes: None, .. })) {
+        inner.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
+    }
+    let boundary = Boundary {
+        signature: None,
+        widths: Widths::of(&inner),
+        natives: BTreeMap::new(),
+    };
+    Ok(Module {
+        inner,
+        boundary,
+        signed,
+    })
 }
 
 #[cfg(test)]

@@ -29,16 +29,16 @@
 //! body is valid only until the next call or resume on the same VM.
 
 use keleusma::Arena;
-use keleusma::bytecode::{ArrayBody, TupleBody, Value};
+use keleusma::bytecode::{ArrayBody, EnumBody, StructBody, TupleBody, Value};
 use keleusma::flat_value::FlatComposite;
 use keleusma::marshall::{KeleusmaType, RefContext};
 use keleusma::value_layout::LayoutDescriptor;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple};
 
-use crate::types::Ty;
+use crate::types::{OPTION_NONE, OPTION_SOME, Ty, Variant};
 use crate::vm::VMError;
 
 /// The module's scalar widths in bytes, which flat bodies are packed with.
@@ -140,8 +140,107 @@ pub fn to_value(obj: &Bound<'_, PyAny>, ty: &Ty) -> PyResult<Value> {
             let types = vec![(**element).clone(); *count];
             Ok(Value::array(elements(items.into_iter(), &types)?))
         }
+        Ty::Struct { name, fields } => struct_value(obj, ty, name, fields),
+        Ty::Refined { name, .. } => Err(PyTypeError::new_err(format!(
+            "`{name}` is a refined newtype, whose rule is script code the host cannot run, \
+             so the host cannot supply one; pass the underlying value and let the script \
+             build it"
+        ))),
+        Ty::Enum { name, variants } => enum_value(obj, ty, name, variants),
+        Ty::Option(inner) => {
+            if obj.is_none() {
+                Ok(Value::None)
+            } else {
+                let payload = to_value(obj, inner)?;
+                Ok(Value::Enum(EnumBody::boxed_with_disc(
+                    "Option".to_string(),
+                    "Some".to_string(),
+                    OPTION_SOME,
+                    vec![payload],
+                )))
+            }
+        }
         _ => Err(type_error(ty, obj)),
     }
+}
+
+/// A struct from any mapping with exactly the declared fields.
+fn struct_value(
+    obj: &Bound<'_, PyAny>,
+    ty: &Ty,
+    name: &str,
+    fields: &[(String, Ty)],
+) -> PyResult<Value> {
+    let mapping = obj.cast::<PyMapping>().map_err(|_| type_error(ty, obj))?;
+    if mapping.len()? != fields.len() {
+        let declared: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        return Err(PyTypeError::new_err(format!(
+            "expected {name} with the fields {}, got a mapping of {} key(s)",
+            declared.join(", "),
+            mapping.len()?
+        )));
+    }
+    let values = fields
+        .iter()
+        .map(|(field, field_ty)| {
+            let item = mapping.get_item(field).map_err(|_| {
+                PyTypeError::new_err(format!("expected {name} to have the field `{field}`"))
+            })?;
+            Ok((field.clone(), to_value(&item, field_ty)?))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(Value::Struct(StructBody::boxed(name.to_string(), values)))
+}
+
+/// An enum value from a `keleusma.Variant`, or from a variant's name for a variant
+/// without fields.
+fn enum_value(
+    obj: &Bound<'_, PyAny>,
+    ty: &Ty,
+    name: &str,
+    variants: &[Variant],
+) -> PyResult<Value> {
+    let variant_class = obj.py().import("keleusma._values")?.getattr("Variant")?;
+    let (variant_name, payload): (String, Vec<Bound<'_, PyAny>>) =
+        if obj.is_instance(&variant_class)? {
+            let values = obj.getattr("values")?;
+            let tuple = values
+                .cast::<PyTuple>()
+                .map_err(|_| PyTypeError::new_err("a Variant's values must be a tuple"))?;
+            (obj.getattr("name")?.extract()?, tuple.iter().collect())
+        } else if obj.is_instance_of::<PyString>() {
+            (obj.extract()?, Vec::new())
+        } else {
+            return Err(type_error(ty, obj));
+        };
+    let variant = variants
+        .iter()
+        .find(|v| v.name == variant_name)
+        .ok_or_else(|| {
+            let known: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+            PyTypeError::new_err(format!(
+                "{name} has no variant `{variant_name}`; its variants are {}",
+                known.join(", ")
+            ))
+        })?;
+    if payload.len() != variant.fields.len() {
+        return Err(PyTypeError::new_err(format!(
+            "{name}::{variant_name} takes {} value(s), got {}",
+            variant.fields.len(),
+            payload.len()
+        )));
+    }
+    let values = payload
+        .iter()
+        .zip(&variant.fields)
+        .map(|(item, field_ty)| to_value(item, field_ty))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(Value::Enum(EnumBody::boxed_with_disc(
+        name.to_string(),
+        variant_name,
+        variant.disc,
+        values,
+    )))
 }
 
 /// What reading a value out needs from the VM that produced it.
@@ -204,8 +303,55 @@ pub fn to_py<'py>(
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyList::new(py, converted)?.into_any())
         }
+        (Ty::Struct { name, fields }, Value::Struct(StructBody::Boxed(boxed))) => {
+            let dict = PyDict::new(py);
+            for (field, field_ty) in fields {
+                let value = boxed
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == field)
+                    .map(|(_, v)| v)
+                    .ok_or_else(|| {
+                        mismatch(ty, &format!("a {name} without the field `{field}`"))
+                    })?;
+                dict.set_item(field, to_py(py, value, field_ty, ctx)?)?;
+            }
+            Ok(dict.into_any())
+        }
+        (Ty::Enum { variants, .. }, Value::Enum(EnumBody::Boxed(boxed))) => {
+            let variant = variants
+                .iter()
+                .find(|v| v.name == boxed.variant)
+                .ok_or_else(|| mismatch(ty, &format!("the variant `{}`", boxed.variant)))?;
+            if boxed.fields.len() != variant.fields.len() {
+                return Err(mismatch(
+                    ty,
+                    &format!("`{}` with the wrong payload", boxed.variant),
+                ));
+            }
+            let values = boxed
+                .fields
+                .iter()
+                .zip(&variant.fields)
+                .map(|(v, t)| to_py(py, v, t, ctx))
+                .collect::<PyResult<Vec<_>>>()?;
+            make_variant(py, &variant.name, values)
+        }
+        (Ty::Refined { inner, .. }, value) => to_py(py, value, inner, ctx),
+        (Ty::Option(_), Value::None) => Ok(py.None().into_bound(py)),
+        (Ty::Option(inner), Value::Enum(EnumBody::Boxed(boxed))) if boxed.type_name == "Option" => {
+            match (boxed.variant.as_str(), boxed.fields.as_slice()) {
+                ("None", []) => Ok(py.None().into_bound(py)),
+                ("Some", [payload]) => to_py(py, payload, inner, ctx),
+                _ => Err(mismatch(ty, &format!("an Option `{}`", boxed.variant))),
+            }
+        }
         (Ty::Tuple(_), Value::Tuple(TupleBody::Flat(body)))
-        | (Ty::Array(..), Value::Array(ArrayBody::Flat(body))) => flat_body(py, body, ty, ctx),
+        | (Ty::Array(..), Value::Array(ArrayBody::Flat(body)))
+        | (Ty::Struct { .. }, Value::Struct(StructBody::Flat(body)))
+        | (Ty::Enum { .. } | Ty::Option(_), Value::Enum(EnumBody::Flat(body))) => {
+            flat_body(py, body, ty, ctx)
+        }
         (_, other) => Err(mismatch(ty, &format!("{other:?}"))),
     }
 }
@@ -273,6 +419,47 @@ fn read_flat<'py>(
             )?;
             Ok(PyList::new(py, items)?.into_any())
         }
+        Ty::Refined { inner, .. } => read_flat(py, bytes, inner, ctx, epoch),
+        Ty::Struct {
+            fields: declared, ..
+        } => {
+            let items = fields(
+                py,
+                bytes,
+                &layout,
+                declared.iter().map(|(_, t)| t),
+                ctx,
+                epoch,
+            )?;
+            let dict = PyDict::new(py);
+            for ((field, _), item) in declared.iter().zip(items) {
+                dict.set_item(field, item)?;
+            }
+            Ok(dict.into_any())
+        }
+        Ty::Enum { variants, .. } => {
+            let disc = read_disc(bytes, word_bytes, float_bytes, ty)?;
+            let variant = variants
+                .iter()
+                .find(|v| v.disc == disc)
+                .ok_or_else(|| mismatch(ty, &format!("the discriminant {disc}")))?;
+            let values = payload(py, bytes, &variant.fields, ctx, epoch)?;
+            make_variant(py, &variant.name, values)
+        }
+        Ty::Option(inner) => {
+            let disc = read_disc(bytes, word_bytes, float_bytes, ty)?;
+            match disc {
+                OPTION_NONE => Ok(py.None().into_bound(py)),
+                OPTION_SOME => {
+                    let mut values =
+                        payload(py, bytes, std::slice::from_ref(inner.as_ref()), ctx, epoch)?;
+                    values
+                        .pop()
+                        .ok_or_else(|| mismatch(ty, "a Some without a payload"))
+                }
+                other => Err(mismatch(ty, &format!("the Option discriminant {other}"))),
+            }
+        }
         scalar => {
             let kind = match layout {
                 LayoutDescriptor::Scalar(kind) => kind,
@@ -283,6 +470,57 @@ fn read_flat<'py>(
             to_py(py, &value, scalar, ctx)
         }
     }
+}
+
+/// The discriminant in a flat enum body's leading word.
+fn read_disc(bytes: &[u8], word_bytes: usize, float_bytes: usize, ty: &Ty) -> PyResult<i64> {
+    match Value::read_scalar_le(
+        bytes,
+        0,
+        keleusma::value_layout::ScalarKind::Int,
+        word_bytes,
+        float_bytes,
+    ) {
+        Ok(Value::Int(disc)) => Ok(disc),
+        _ => Err(mismatch(ty, "an enum body without a discriminant")),
+    }
+}
+
+/// Read a flat enum variant's payload, packed after the discriminant word.
+fn payload<'py>(
+    py: Python<'py>,
+    bytes: &[u8],
+    types: &[Ty],
+    ctx: &ReadContext<'_>,
+    epoch: u64,
+) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let Widths {
+        word_bytes,
+        float_bytes,
+    } = ctx.widths;
+    let mut offset = word_bytes;
+    types
+        .iter()
+        .map(|field| {
+            let size = field.layout().size_in_bytes(word_bytes, float_bytes);
+            let slice = offset
+                .checked_add(size)
+                .and_then(|end| bytes.get(offset..end))
+                .ok_or_else(|| mismatch(field, "a payload past the end of its enum"))?;
+            offset += size;
+            read_flat(py, slice, field, ctx, epoch)
+        })
+        .collect()
+}
+
+fn make_variant<'py>(
+    py: Python<'py>,
+    name: &str,
+    values: Vec<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    py.import("keleusma._values")?
+        .getattr("Variant")?
+        .call1((name, PyTuple::new(py, values)?))
 }
 
 /// Read each field of a flat composite at Keleusma's offsets.
@@ -315,7 +553,7 @@ fn fields<'a, 'py>(
 }
 
 /// Convert a value with no declared type, as a bare `use host::name` gives a native's
-/// arguments. Scalars carry their own tags and convert. A `Fixed` has no fraction-bit
+/// arguments, and as every value of a module loaded from bytes is. Scalars carry their own tags and convert. A `Fixed` has no fraction-bit
 /// count without a type, and a composite has no field types, so both need a declared
 /// signature, `use host::name(T1, T2) -> R`, and raise `TypeError` otherwise.
 pub fn to_py_untyped<'py>(
@@ -332,8 +570,7 @@ pub fn to_py_untyped<'py>(
         Value::StaticStr(s) => s.into_bound_py_any(py),
         Value::KStr(k) => k.get(ctx.arena).map_err(|_| stale())?.into_bound_py_any(py),
         other => Err(PyTypeError::new_err(format!(
-            "a native without a declared signature received {}, which needs one; \
-             declare it as `use host::name(T1, T2) -> R`",
+            "{} needs a declared type to convert, which {UNTYPED_HINT}",
             kind_name(other)
         ))),
     }
@@ -368,10 +605,14 @@ pub fn to_value_untyped(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
         .map(|n| n.to_string())
         .unwrap_or_else(|_| "an unknown type".to_string());
     Err(PyTypeError::new_err(format!(
-        "a native without a declared signature returned {got}, which needs one; \
-         declare it as `use host::name(T1, T2) -> R`"
+        "a value of type {got} needs a declared type to convert, which {UNTYPED_HINT}"
     )))
 }
+
+/// Where a declared type would have come from, for the untyped conversion errors.
+const UNTYPED_HINT: &str = "a native gains from a signature such as \
+    `use host::name(T1, T2) -> R`, and which a module loaded from bytes does not have, \
+    since only scalars convert without one";
 
 fn kind_name(value: &Value) -> &'static str {
     match value {

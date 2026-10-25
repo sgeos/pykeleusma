@@ -43,7 +43,7 @@ use keleusma::token::Span;
 use keleusma::typecheck::{check_with_target, check_with_target_recording};
 use keleusma::visitor::Visitor;
 
-use crate::types::{Ty, resolve};
+use crate::types::{Resolver, Ty};
 
 /// A yield whose value has a type other than the declared one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,14 +62,15 @@ pub fn check(program: &Program, target: Target) -> Result<Option<Mismatch>, Stri
     let (mut owned, _) = monomorphize_with_provenance(owned);
     check_with_target_recording(&mut owned, target).map_err(|e| e.message)?;
     let empty = BTreeMap::new();
+    let resolver = Resolver::new(&owned, default_frac_bits);
     for function in &owned.functions {
-        let Ok(declared) = resolve(&function.return_type, default_frac_bits) else {
+        let Ok(declared) = resolver.resolve(&function.return_type) else {
             continue;
         };
         let mut visitor = YieldVisitor {
             declared: &declared,
             recorded: owned.fn_expr_types.get(&function.name).unwrap_or(&empty),
-            default_frac_bits,
+            resolver: &resolver,
             function: &function.name,
             found: None,
         };
@@ -84,7 +85,7 @@ pub fn check(program: &Program, target: Target) -> Result<Option<Mismatch>, Stri
 struct YieldVisitor<'a> {
     declared: &'a Ty,
     recorded: &'a BTreeMap<Span, TypeExpr>,
-    default_frac_bits: u8,
+    resolver: &'a Resolver,
     function: &'a str,
     found: Option<Mismatch>,
 }
@@ -93,7 +94,7 @@ impl YieldVisitor<'_> {
     /// The recorded type of `expr`, if Keleusma recorded one the binding models.
     fn recorded_type(&self, expr: &Expr) -> Option<Ty> {
         let recorded = self.recorded.get(&expr.span())?;
-        resolve(recorded, self.default_frac_bits).ok()
+        self.resolver.resolve(recorded).ok()
     }
 
     /// The first mismatch between `expr` and `expected`, descending into tuple and

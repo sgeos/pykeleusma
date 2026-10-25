@@ -23,7 +23,8 @@ def test_the_readme_states_the_guarantee_boundary() -> None:
     assert "It never covers\nPython." in section
     assert "Python code is outside every bound." in section
     assert "promises, not limits" in section
-    assert "not cycles\n  or seconds" in section
+    assert "in nominal cycles" in section
+    assert "not the cycles of any particular processor" in section
 
 
 def test_the_readme_names_its_empirical_limits() -> None:
@@ -41,3 +42,11 @@ def test_the_readme_usage_example_runs() -> None:
         "stream.resume(10)", "assert stream.resume(10) == keleusma.Reset()"
     ).replace("stream.resume(20)", "assert stream.resume(20) == keleusma.Yielded(40)")
     exec(compile(code, "README.md", "exec"), {})  # noqa: S102 - the repository's own README
+
+
+def test_the_readme_signing_example_runs() -> None:
+    block = re.search(
+        r"### Bytecode, signing and hot swap\n\n```python\n(.*?)```", README, re.S
+    )
+    assert block is not None
+    exec(compile(block.group(1), "README.md", "exec"), {})  # noqa: S102 - as above

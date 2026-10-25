@@ -8,6 +8,8 @@
 
 mod compile;
 mod convert;
+mod crypto;
+mod libraries;
 mod natives;
 mod owned_vm;
 mod types;
@@ -31,6 +33,19 @@ const KELEUSMA_VERSION: &str = "0.2.2";
 /// figure to `keleusma.VM`.
 pub const DEFAULT_ARGUMENT_BYTES: usize = 4096;
 
+/// The `use` declarations of one of Keleusma's bundled libraries, `"math"`, `"audio"`
+/// or `"shell"`, which a script may include so its calls are type-checked.
+#[pyfunction]
+fn library_signatures(name: &str) -> PyResult<&'static str> {
+    libraries::Library::named(name)
+        .map(libraries::Library::signatures)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown library `{name}`; the libraries are math, audio and shell"
+            ))
+        })
+}
+
 /// The number of VMs alive in this process, for leak tests.
 #[pyfunction]
 fn _live_vm_count() -> usize {
@@ -47,7 +62,11 @@ fn _keleusma(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("DEFAULT_ARGUMENT_BYTES", DEFAULT_ARGUMENT_BYTES)?;
     module.add_class::<compile::Module>()?;
     module.add_function(wrap_pyfunction!(compile::compile, module)?)?;
+    module.add_function(wrap_pyfunction!(compile::load_module, module)?)?;
     module.add_class::<vm::VM>()?;
     module.add_function(wrap_pyfunction!(_live_vm_count, module)?)?;
+    module.add_function(wrap_pyfunction!(library_signatures, module)?)?;
+    module.add_function(wrap_pyfunction!(crypto::signing_public_key, module)?)?;
+    module.add_function(wrap_pyfunction!(crypto::encryption_public_key, module)?)?;
     Ok(())
 }

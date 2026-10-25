@@ -10,7 +10,7 @@ tag by comparing it with literal strings, which Keleusma supports without native
 
 **The tick budget.** Every processor advances by exactly one stream iteration per tick,
 so the script work of a tick is bounded by the sum of the processors'
-`wcet_per_iteration`, in Keleusma's nominal cost units. Python's own work, including
+`wcet_per_iteration`, in nominal cycles. Python's own work, including
 the binding's conversions and acting on the actions, is outside that bound.
 """
 
@@ -75,7 +75,7 @@ class Scheduler:
         ]
 
     def tick_budget(self) -> int:
-        """The worst-case script work of one tick, in nominal cost units."""
+        """The worst-case script work of one tick, in nominal cycles."""
         total = 0
         for line in self.lines:
             figure = line.vm.wcet_per_iteration
@@ -98,7 +98,7 @@ class Scheduler:
 
 def main() -> None:
     scheduler = Scheduler(count=100)
-    print(f"tick budget: {scheduler.tick_budget()} nominal cost units for 100 lines")
+    print(f"tick budget: {scheduler.tick_budget()} nominal cycles for 100 lines")
     ticks: list[dict[int, tuple[str, str]]] = [
         {3: ("message", "review my patch"), 7: ("tokens", "thinking")},
         {7: ("turn_end", "")},
