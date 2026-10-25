@@ -14,6 +14,21 @@
 //! conversion error is raised before the VM is entered, and `NotSuspended`, a resume
 //! with nothing to resume, is returned by Keleusma before it changes anything.
 //!
+//! # Shared data
+//!
+//! Keleusma lends a module's shared `data` block to each call as a host-owned byte
+//! buffer. The VM owns that buffer in Rust for its whole life, zeroed at construction.
+//! A call given `shared=` syncs the Rust copy from the Python buffer, runs the VM, and
+//! flushes the Rust copy back to the Python buffer. A call without it runs on the Rust
+//! copy as it stands, so state persists across calls either way. The VM never lends
+//! Python's memory to Keleusma, so whatever Python does to its own buffer during a call,
+//! for example from a native, cannot affect the run, and the flush overwrites it. That
+//! is a matter for the Python code, not for Keleusma.
+//!
+//! After a failed call the flush is skipped, so the Python buffer keeps its pre-call
+//! contents while the Rust copy holds whatever the script wrote before failing. The VM
+//! is then failed and refuses further use, so the Rust copy is not used again.
+//!
 //! | Failure | Python exception |
 //! |---|---|
 //! | The verifier rejects the module | `keleusma.VerifyError`, with the verifier's message |
@@ -33,7 +48,7 @@ use pyo3::exceptions::{
     PyKeyError, PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 use pyo3::{PyTraverseError, PyVisit};
 
 use crate::compile::{Boundary, Module};
@@ -66,67 +81,32 @@ fn construction_error(error: OwnedVmError) -> PyErr {
     }
 }
 
-/// A host buffer lent to one call as the shared `data` block.
+/// A Python buffer to sync the shared `data` block from before a call, and to flush it
+/// to after.
 ///
-/// The buffer is copied into a Rust vector before the call and copied back after it
-/// succeeds, rather than lent in place. Lending the Python memory itself would let a
-/// Python native write to it while Keleusma holds a mutable borrow of the same bytes,
-/// which Rust's aliasing rules forbid, and it would need `unsafe` code. The cost is
-/// one copy each way, of `shared_data_bytes`, which is small by construction. A
-/// native running during the call sees the buffer as it was before the call. After a
-/// failed call the buffer is left as it was, because the VM's state is then undefined.
-struct Lent {
-    buffer: Option<PyBuffer<u8>>,
-    bytes: Vec<u8>,
-}
-
-impl Lent {
-    fn none() -> Self {
-        Self {
-            buffer: None,
-            bytes: Vec::new(),
-        }
+/// Checked here so that an unsuitable buffer is refused before the VM runs.
+fn host_buffer(object: &Bound<'_, PyAny>, size: usize) -> PyResult<PyBuffer<u8>> {
+    let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
+        PyTypeError::new_err(
+            "`shared` must support the buffer protocol with byte items, such as a \
+             bytearray, a memoryview of one, or a NumPy uint8 array",
+        )
+    })?;
+    if buffer.readonly() {
+        return Err(PyTypeError::new_err(
+            "`shared` must be writable, because the script's changes are flushed to it",
+        ));
     }
-
-    fn new(object: &Bound<'_, PyAny>, size: usize) -> PyResult<Self> {
-        let buffer = PyBuffer::<u8>::get(object).map_err(|_| {
-            PyTypeError::new_err(
-                "`shared` must support the buffer protocol with byte items, such as a \
-                 bytearray, a memoryview of one, or a NumPy uint8 array",
-            )
-        })?;
-        if buffer.readonly() {
-            return Err(PyTypeError::new_err(
-                "`shared` must be writable, because the script may change it",
-            ));
-        }
-        if !buffer.is_c_contiguous() {
-            return Err(PyValueError::new_err("`shared` must be contiguous"));
-        }
-        if buffer.item_count() != size {
-            return Err(PyValueError::new_err(format!(
-                "`shared` has {} bytes, but the module's shared `data` block has {size}",
-                buffer.item_count()
-            )));
-        }
-        let bytes = buffer.to_vec(object.py())?;
-        Ok(Self {
-            buffer: Some(buffer),
-            bytes,
-        })
+    if !buffer.is_c_contiguous() {
+        return Err(PyValueError::new_err("`shared` must be contiguous"));
     }
-
-    fn bytes(&mut self) -> &mut [u8] {
-        &mut self.bytes
+    if buffer.item_count() != size {
+        return Err(PyValueError::new_err(format!(
+            "`shared` has {} bytes, but the module's shared `data` block has {size}",
+            buffer.item_count()
+        )));
     }
-
-    /// Copy the script's changes back into the host buffer.
-    fn give_back(self, py: Python<'_>) -> PyResult<()> {
-        match self.buffer {
-            Some(buffer) => buffer.copy_from_slice(py, &self.bytes),
-            None => Ok(()),
-        }
-    }
+    Ok(buffer)
 }
 
 fn unknown_native(name: &str, names: &[String]) -> PyErr {
@@ -185,6 +165,9 @@ pub struct VM {
     registry: Registry,
     /// An exception raised by a native during the current call, to re-raise.
     native_error: ErrorSlot,
+    /// The module's shared `data` block, owned here for the VM's whole life and lent
+    /// to Keleusma on every call. See "Shared data" in the module documentation.
+    shared: Vec<u8>,
 }
 
 #[pymethods]
@@ -259,6 +242,8 @@ impl VM {
         // The arena was sized with these bounds, so this confirms the sizing rather
         // than expecting to fail.
         vm.verify_resources().map_err(|e| vm_error(&e))?;
+        // Zeroed, so a script reads defined bytes before the host writes any.
+        let shared = vec![0u8; vm.shared_data_bytes()];
         Ok(Self {
             vm,
             boundary,
@@ -266,6 +251,7 @@ impl VM {
             has_stream,
             registry,
             native_error,
+            shared,
         })
     }
 
@@ -380,8 +366,10 @@ impl VM {
     /// Returns `Yielded`, `Finished` or `Reset`, with the value converted by the
     /// declared return type.
     ///
-    /// `shared` is a writable buffer of exactly `vm.shared_data_bytes` bytes for a
-    /// module that declares a shared `data` block, and must be omitted otherwise.
+    /// `shared`, for a module that declares a shared `data` block, is a writable
+    /// buffer of exactly `vm.shared_data_bytes` bytes. The VM syncs its own copy of the
+    /// block from it before running and flushes the copy back to it afterwards.
+    /// Without it, the VM runs on its own copy as it stands.
     #[pyo3(signature = (*args, shared = None))]
     fn call<'py>(
         &mut self,
@@ -390,7 +378,7 @@ impl VM {
         shared: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.check_usable()?;
-        let mut lent = self.lend(shared)?;
+        let host = self.sync_shared(shared)?;
         let signature = self.signature()?;
         if args.len() != signature.params.len() {
             return Err(PyTypeError::new_err(format!(
@@ -408,9 +396,9 @@ impl VM {
                 to_value(&arg, ty)
             })
             .collect::<PyResult<Vec<_>>>()?;
-        let outcome = self.vm.call_with_shared(lent.bytes(), &values);
+        let outcome = self.vm.call_with_shared(&mut self.shared, &values);
         let state = self.state(py, outcome)?;
-        lent.give_back(py)?;
+        self.flush_shared(py, host)?;
         Ok(state)
     }
 
@@ -429,19 +417,25 @@ impl VM {
         shared: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.check_usable()?;
-        let mut lent = self.lend(shared)?;
         let ty = declared(&self.signature()?.resume, "resume")?;
         let input = to_value(value, ty)?;
-        let outcome = self.vm.resume_with_shared(lent.bytes(), input);
+        let host = self.sync_shared(shared)?;
+        let outcome = self.vm.resume_with_shared(&mut self.shared, input);
         let state = self.state(py, outcome)?;
-        lent.give_back(py)?;
+        self.flush_shared(py, host)?;
         Ok(state)
     }
 
     /// The size in bytes of the module's shared `data` block, zero if it has none.
     #[getter]
     fn shared_data_bytes(&self) -> usize {
-        self.vm.shared_data_bytes()
+        self.shared.len()
+    }
+
+    /// A copy of the VM's own shared `data` block as it stands.
+    #[getter]
+    fn shared_data<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.shared)
     }
 
     /// Drive the VM through Python's generator protocol, yielding each `Yielded` and
@@ -503,19 +497,26 @@ impl VM {
         Ok(())
     }
 
-    /// Check `shared` against the module's shared block and copy it in. See [`Lent`].
-    fn lend(&self, shared: Option<&Bound<'_, PyAny>>) -> PyResult<Lent> {
-        let size = self.vm.shared_data_bytes();
-        match (size, shared) {
-            (0, None) => Ok(Lent::none()),
-            (0, Some(_)) => Err(PyTypeError::new_err(
+    /// Copy a Python buffer into the VM's shared block, returning it for the flush.
+    fn sync_shared(&mut self, shared: Option<&Bound<'_, PyAny>>) -> PyResult<Option<PyBuffer<u8>>> {
+        let Some(object) = shared else {
+            return Ok(None);
+        };
+        if self.shared.is_empty() {
+            return Err(PyTypeError::new_err(
                 "the module declares no shared `data` block, so `shared` must be omitted",
-            )),
-            (size, None) => Err(PyTypeError::new_err(format!(
-                "the module declares a shared `data` block of {size} bytes; pass \
-                 `shared=` a writable buffer of that size, such as a bytearray"
-            ))),
-            (size, Some(object)) => Lent::new(object, size),
+            ));
+        }
+        let buffer = host_buffer(object, self.shared.len())?;
+        buffer.copy_to_slice(object.py(), &mut self.shared)?;
+        Ok(Some(buffer))
+    }
+
+    /// Copy the VM's shared block back to the Python buffer it was synced from.
+    fn flush_shared(&self, py: Python<'_>, host: Option<PyBuffer<u8>>) -> PyResult<()> {
+        match host {
+            Some(buffer) => buffer.copy_from_slice(py, &self.shared),
+            None => Ok(()),
         }
     }
 

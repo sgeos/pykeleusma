@@ -1,8 +1,9 @@
-"""A module's shared `data` block, lent to each call as a host buffer.
+"""A module's shared `data` block, owned by the VM in Rust and synced with Python.
 
 Requested by the `pydromon` line, on the operator's instruction, so that a stream
-processor can keep state in its module's declared data block. The buffer is copied in
-before each call and copied back after a successful one, as `src/vm.rs` explains.
+processor can keep state in its module's declared data block. The VM owns the block for
+its whole life. A call given `shared=` syncs the block from that Python buffer, runs,
+and flushes the block back, as `src/vm.rs` explains.
 Layouts are checked with `struct`, which derives the expected sizes and offsets from
 the packed little-endian layout Keleusma uses, rather than from pinned numbers.
 """
@@ -88,12 +89,25 @@ def test_a_numpy_byte_array_works() -> None:
 # Refusals, which leave the VM usable because nothing ran.
 
 
-def test_a_missing_buffer_is_refused_before_running() -> None:
+def test_without_a_buffer_the_vm_keeps_the_block_itself() -> None:
+    # The VM owns the block in Rust, zeroed at construction, so state persists across
+    # calls that pass no Python buffer.
     vm = keleusma.VM(COUNTER)
-    with pytest.raises(TypeError, match="pass `shared=`"):
-        vm.call(1)
-    assert not vm.failed
-    assert vm.call(1, shared=_buffer()) == keleusma.Yielded(1)
+    assert vm.shared_data == bytes(vm.shared_data_bytes)
+    assert vm.call(5) == keleusma.Yielded(5)
+    assert vm.resume(0) == keleusma.Reset()
+    assert vm.resume(7) == keleusma.Yielded(12)
+    assert struct.unpack(TWO_WORDS, vm.shared_data) == (12, 2)
+
+
+def test_a_buffer_syncs_into_the_vm_and_is_flushed_back() -> None:
+    vm = keleusma.VM(COUNTER)
+    vm.call(5)  # The VM's own block now holds (5, 1).
+    buffer = _buffer(n=100, ticks=10)
+    vm.resume(0, shared=buffer)  # Synced from the buffer, so the VM forgets (5, 1).
+    assert vm.resume(1, shared=buffer) == keleusma.Yielded(101)
+    assert struct.unpack(TWO_WORDS, buffer) == (101, 11)
+    assert vm.shared_data == bytes(buffer)
 
 
 def test_a_buffer_for_a_module_without_a_block_is_refused() -> None:
@@ -152,3 +166,23 @@ def test_a_native_sees_the_buffer_as_it_was_before_the_call() -> None:
     assert vm.call(42, shared=buffer) == keleusma.Finished(42)
     assert seen == [1]  # The script's write was not yet visible to the native.
     assert struct.unpack("<q", buffer) == (42,)  # It is after the call.
+
+
+def test_the_flush_overwrites_what_python_wrote_during_the_call() -> None:
+    # The VM never lends Python's memory to Keleusma. A native that writes to the
+    # Python buffer during the call affects neither the run nor the result, and the
+    # flush replaces its write with the VM's block. That is the Python code's concern.
+    module = keleusma.compile(
+        "use host::scribble(Word) -> Word\n"
+        "data st { n: Word }\n"
+        "fn main(e: Word) -> Word { st.n = e; host::scribble(st.n) }"
+    )
+    buffer = bytearray(struct.pack("<q", 1))
+
+    def scribble(e: int) -> int:
+        struct.pack_into("<q", buffer, 0, -999)
+        return e
+
+    vm = keleusma.VM(module, natives={"host::scribble": scribble})
+    assert vm.call(42, shared=buffer) == keleusma.Finished(42)
+    assert struct.unpack("<q", buffer) == (42,)

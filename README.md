@@ -81,9 +81,10 @@ stream.resume(20)  # keleusma.Yielded(40), the start of the next
   `keleusma.Native(f, wcet=..., wcmu_bytes=...)` to declare bounds, which size the
   arena or are refused.
 - **State.** Private data fields start as `()`, not zero, so assign one before reading
-  it. A shared `data` block is lent as a host buffer on each call, as in
-  `vm.call(x, shared=buffer)` with a `bytearray` of `vm.shared_data_bytes` bytes, and the
-  script's changes are copied back after a successful call.
+  it. A shared `data` block is owned by the VM, which keeps it across calls.
+  `vm.call(x, shared=buffer)`, with a `bytearray` of `vm.shared_data_bytes` bytes, syncs
+  the block from `buffer`, runs, and flushes the block back to it, and `vm.shared_data`
+  returns a copy of it.
 - **Arena budget.** A VM reserves `argument_bytes`, 4096 by default, of its arena for
   composite arguments such as tuples carrying text. A host that passes larger values
   gives a larger figure.

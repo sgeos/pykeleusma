@@ -7,9 +7,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
-- Shared `data` blocks, lent to each call as a host buffer through `shared=` on
-  `vm.call`, `vm.resume` and `vm.stream`, with `vm.shared_data_bytes`. The buffer is
-  copied in and copied back after a successful call.
+- Shared `data` blocks, owned by the VM in Rust and lent to Keleusma on each call.
+  `shared=` on `vm.call`, `vm.resume` and `vm.stream` syncs the block from a Python
+  buffer and flushes it back after the call. `vm.shared_data_bytes` and
+  `vm.shared_data` describe and copy it.
 - The README's section "What is guaranteed, and what is not", stating that Keleusma's
   bounds cover the script and declared native bounds, never Python.
 

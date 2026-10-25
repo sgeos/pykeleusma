@@ -74,7 +74,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 210 tests pass
+uv sync && uv run pytest    # 212 tests pass
 cargo test                  # 27 Rust tests pass
 ```
 
