@@ -13,9 +13,9 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 **Early development.** The repository was cut on 2026-10-24 and builds against the
 published Keleusma 0.2.2 from crates.io. Compiling a script, building a verified VM,
-calling and resuming it, streaming it as a generator, and Python natives work. The
-examples, the full statement of the guarantee boundary and a release are still to
-come, as the first milestone lists.
+calling and resuming it, streaming it as a generator, and Python natives work. Runnable
+examples are in `examples/`. The full statement of the guarantee boundary and a release
+are still to come, as the first milestone lists.
 
 ```python
 import keleusma
@@ -44,7 +44,9 @@ stays `bool`, `Float` becomes `float`, `Text` becomes `str`, tuples become `tupl
 arrays become `list`, and `Fixed<N>` becomes `keleusma.Fixed`, an exact `Fraction` that
 remembers its width. Out-of-range integers raise `OverflowError` instead of wrapping.
 After a runtime error a VM reports `failed` and refuses further use, because Keleusma
-leaves its state undefined.
+leaves its state undefined. Private data fields start as `()`, not zero, so assign one
+before reading it. A module with a shared `data` block is refused, because the binding
+does not yet lend it the host buffer Keleusma requires.
 
 For scheduling, `vm.wcet_per_iteration` gives the worst-case time of one iteration of a
 `loop main` in Keleusma's nominal cost units, which are not cycles or seconds, and
@@ -67,6 +69,20 @@ import keleusma
 keleusma.KELEUSMA_VERSION  # "0.2.2"
 keleusma.BYTECODE_VERSION  # 1, read from the linked runtime
 ```
+
+## Examples
+
+Three runnable examples live in `examples/`, and `tests/test_examples.py` runs each one.
+
+```sh
+uv run python examples/batched_update_loop.py   # 100 session lines, one thread, a tick budget
+uv run python examples/numpy_reduction.py       # a NumPy mean and variance, 8 samples per step
+uv run python examples/pygame_frame_loop.py     # a bouncing ball in a window
+```
+
+The PyGame example opens a window, which is the documented manual check. The tests run
+it headless with `SDL_VIDEODRIVER=dummy`. Each frame advances the script by one stream
+iteration, as the example explains.
 
 ## Interface at a glance
 

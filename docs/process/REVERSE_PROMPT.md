@@ -4,37 +4,47 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, tasks 1 to 7
+## 2026-10-25, tasks 1 to 8
 
-**Goal.** Complete all tasks from 1 to 7, skipping those already done, then commit,
+**Goal.** Complete all tasks from 1 to 8, skipping those already done, then commit,
 push and merge all work.
 
-**Already done.** Tasks 1 to 6, merged through pull requests 1 to 9. Only task 7
+**Already done.** Tasks 1 to 7, merged through pull requests 1 to 10. Only task 8
 remained.
 
-**Done, task 7.** Python callables serve as Keleusma natives. They are passed at
-construction, `VM(module, natives={"host::f": f})` or with declared bounds through
-`keleusma.Native(f, wcet=..., wcmu_bytes=...)`, or later through `vm.register`.
-`vm.set_native_bounds` and `vm.native_bounds` manage the bounds.
+**Done, task 8.** Three examples in `examples/`, each run by `tests/test_examples.py`.
 
-- **A native's exception reaches the caller unchanged.** The caller of `call` or
-  `resume` receives the very object the native raised, including `KeyboardInterrupt`,
-  and the VM is then marked failed.
-- **Declared bounds are covered or refused.** Memory bounds given at construction size
-  the arena. A later bound the arena cannot hold raises `VerifyError` and is reverted
-  in Keleusma as well as in the binding.
-- **Cycles are collected.** The VM exposes its natives to Python's garbage collector,
-  so a native bound to the object that owns its VM does not leak.
-- **Missing natives** are refused before the VM runs, so the VM stays usable.
+- `batched_update_loop.py`. A hundred session lines on one thread, each resumed once per
+  tick, with Dromon's tagged-tuple events and actions, and a tick budget that is the sum
+  of the processors' `wcet_per_iteration`.
+- `numpy_reduction.py`. A NumPy array's mean and variance, passed as lists of eight
+  floats per iteration, matching `numpy.mean` and `numpy.var` in tests.
+- `pygame_frame_loop.py`. A bouncing ball whose physics runs in Keleusma. The window is
+  the documented manual check, and the tests run it headless with SDL's dummy drivers.
 
-**Found.** A native's composite result is copied into the arena on every call, so a
-native returning text tuples needs a declared `wcmu_bytes` or relies on the argument
-budget.
+NumPy 2.5.4 and `pygame-ce` 2.5.8 joined the development dependencies. `pygame-ce` was
+chosen over `pygame`, whose 2.6.1 release has no wheels past Python 3.13, while the
+matrix tests 3.15.
 
-**Verification.** 178 Python tests and 27 Rust tests passed locally. Three mutations,
-not re-raising, not reverting and not traversing, each made tests fail. The first
-version of the revert test let its mutation survive, and was strengthened to check the
-time figure, which reads Keleusma's own copy of the bounds. The README's native pattern
-was run. `ruff`, `pyright`, `cargo fmt` and `cargo clippy` were clean.
+**Deviation, for the operator.** The roadmap asks for a frame loop that "resumes once per
+frame". Under Keleusma 0.2.2 that is not possible with a stream. Every stream must yield,
+so a yield-free iteration is rejected, and an inner loop around a yield has no static
+bound, so it is rejected too. Each iteration is therefore one yield and one `Reset`, and
+the example advances one iteration per frame, which is two resumes. Calling `main` again
+each frame also works, but restarting a suspended stream is behaviour I have not verified
+as safe over many frames, so the example does not rely on it. The roadmap records this.
 
-**Next.** Task 8, the examples.
+**Also, from `pydromon`.** Its notice `pydromon-20261025-data-segment-gap` reported that
+private data reads `()` before assignment and that shared `data` blocks cannot be driven.
+The first is Keleusma 0.2.2's documented behaviour, now pinned by a test. Its book says
+otherwise, which went to `v0.2.3`. For the second, the binding now refuses such a module
+at construction with a clear `VerifyError`. Exposing the shared buffer is future work.
+Both are recorded under Data segments in the design, and `pydromon` was answered.
+
+**Verification.** 193 Python tests and 27 Rust tests passed locally, with pyright in
+strict mode covering the examples. All three examples were run from the command line.
+
+**Not run.** The PyGame window itself, which needs a display. Run
+`uv run python examples/pygame_frame_loop.py` to see it.
+
+**Next.** Task 9, the statement of the guarantee boundary.
