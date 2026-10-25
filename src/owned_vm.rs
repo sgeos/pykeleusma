@@ -186,6 +186,8 @@ impl ArenaPlan {
             .saturating_sub(module.aux_arena_bytes as usize)
             .saturating_sub(heap as usize);
         let persistent = required_persistent_capacity_for(module);
+        // KELEUSMA-0.2.2: the regrowth margin covers the shortfall after the first
+        // `Reset`. Its canary below fails once Keleusma's footprint covers it.
         let regrowth = working
             .checked_mul(2)
             .ok_or(OwnedVmError::CapacityOverflow)?;
@@ -308,7 +310,7 @@ impl OwnedVm {
         self.call_with_shared(&mut [], args)
     }
 
-    /// [`Self::call`], lending `shared` as the module's shared data block for the
+    /// The test-only `call`, lending `shared` as the module's shared data block for the
     /// duration of the call. Keleusma requires it to be exactly the block's size, or
     /// empty for a module without one.
     pub fn call_with_shared(
@@ -528,7 +530,7 @@ impl OwnedVm {
         self.resume_with_shared(&mut [], input)
     }
 
-    /// [`Self::resume`], lending `shared` as in [`Self::call_with_shared`].
+    /// The test-only `resume`, lending `shared` as in [`Self::call_with_shared`].
     pub fn resume_with_shared(
         &mut self,
         shared: &mut [u8],

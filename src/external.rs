@@ -7,6 +7,9 @@
 //! context, so it can neither capture a Python callable nor reach the arena that a
 //! text or composite argument lives in.
 //!
+//! KELEUSMA-0.2.2: the 0.2.3 branch keeps the function pointer. A closure-based
+//! registration with a native context, requested of Keleusma, would retire this module.
+//!
 //! # How the binding bridges it
 //!
 //! A fixed pool of [`MAX_EXTERNAL`] trampoline functions stands in for the function

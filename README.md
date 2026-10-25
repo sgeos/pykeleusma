@@ -11,20 +11,73 @@ wrappers such as `pyzmq`, which imports as `zmq`, and `pycairo`, which imports a
 
 ## Status
 
-**Early development.** The repository was cut on 2026-10-24 and builds against the
-published Keleusma 0.2.2 from crates.io. Compiling, verified construction, calling,
-resuming, streaming, value conversion, Python natives and shared data work, as do the
-book's structs, enums and options, big numbers, opaque host values, recoverable native
-errors, bundled libraries, precompiled, signed and encrypted bytecode, hot swap and
-custom cost models. The ten example scripts that
-ship with Keleusma run in tests with their stated results, and so do three examples of
-this repository's own. Keleusma 0.2.2 defects that the binding works around, and what
-it does not support, are in the design under Book coverage, and the move to Keleusma
-0.2.3 is prepared in
-[`docs/architecture/MIGRATION_V0_2_3.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/MIGRATION_V0_2_3.md). The first milestone is in
-[`docs/roadmap/V0_1_0.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/roadmap/V0_1_0.md) and the design in
-[`docs/architecture/BINDING_DESIGN.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/BINDING_DESIGN.md). Nothing is
-published to PyPI yet.
+**Early development.** Version 0.2.2.0 builds against the published Keleusma 0.2.2
+from crates.io. Compiling, verified construction, calling, resuming, streaming, value
+conversion, Python natives and shared data work, as do the book's structs, enums and
+options, big numbers, opaque host values, recoverable native errors, bundled libraries,
+precompiled, signed and encrypted bytecode, hot swap and custom cost models. The ten
+example scripts that ship with Keleusma run in tests with their stated results, and so
+do three examples of this repository's own. Nothing is published to PyPI yet.
+
+The design is
+[`docs/architecture/BINDING_DESIGN.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/BINDING_DESIGN.md),
+the first milestone is
+[`docs/roadmap/V0_1_0.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/roadmap/V0_1_0.md),
+and changes are listed in
+[`CHANGELOG.md`](https://github.com/sgeos/pykeleusma/blob/main/CHANGELOG.md).
+
+## Limitations
+
+**This is a best-effort binding for Keleusma 0.2.2.** Most of its limitations come
+from defects and gaps in that Keleusma release, which have been reported to the
+Keleusma project. **They are expected to clear when the public Keleusma 0.2.3 is
+released.** Some are already fixed on Keleusma's development branch. The rest have not
+been confirmed fixed, so each will be checked when the binding moves to 0.2.3, and any
+that remains will be listed then. The move is planned in
+[`docs/architecture/MIGRATION_V0_2_3.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/MIGRATION_V0_2_3.md).
+
+Limitations from Keleusma 0.2.2, expected to clear with 0.2.3.
+
+- **Arena sizing is measured, not proven.** Keleusma 0.2.2 sizes the arena too small
+  after a stream's first `Reset`, so the binding adds a margin found by measurement.
+  Composite arguments, such as tuples carrying text, draw on a budget the host chooses,
+  `argument_bytes`, rather than on a computed bound.
+- **Yield types are checked only in part.** Keleusma 0.2.2 accepts a yield whose value
+  does not match the declared type, and reading such a value can crash the process.
+  The binding refuses every mistyped yield it can detect and every text-bearing yield
+  whose type Keleusma did not record, but it cannot check every expression.
+- **Private data starts as `()`, not zero,** although the book says zero. Assign a
+  private field before reading it.
+- **Assign a private array element by element.** In 0.2.2, `pv.a = [x, y]` fills only
+  the first element's slot, so a later `pv.a[1]` reads `()`, while `pv.a[0] = x` and
+  `pv.a[1] = y` work.
+- **Generic types cross in one direction only.** A type-generic struct or a
+  const-generic enum can be returned but not passed in, and a type-generic enum is not
+  supported, because Keleusma 0.2.2 lays out their instances inconsistently.
+- **Hot swap cannot seed composite private fields.** Only scalar fields and arrays of
+  scalars can be carried into a new module.
+- **`Text + Text` fails at run time,** although the book says it works.
+- **Library declarations are not checked by Keleusma.** The binding refuses a script
+  whose `use` line for a bundled library native differs from the library's signature.
+
+Moving to 0.2.3 will also change one thing for the worse. Keleusma 0.2.3 changes the
+bytecode version from 1 to 2 and rejects version 1, so **bytecode saved with this
+release will not load after the move**. Keep the source of every script, and compile
+it again.
+
+Limitations of the binding's own design, which 0.2.3 does not change.
+
+- **Python is outside every bound,** as the next section explains.
+- **A VM belongs to the thread that creates it.** A compiled `Module` may be shared
+  between threads.
+- **Bytecode loaded from bytes has no declared types,** so only scalars and text cross
+  its boundary.
+- **Some shapes are refused as inputs.** Nested options, whose `None` would be
+  ambiguous, and refined newtypes, whose rule is script code the host cannot run.
+- **Keys passed from Python cannot be wiped.** A signing seed or decryption key lives
+  in a Python `bytes` object, which the binding cannot zero.
+- **Shared data is copied.** A NumPy array cannot yet serve as a VM's shared data
+  block without a copy.
 
 ## What is guaranteed, and what is not
 
@@ -44,13 +97,9 @@ Python.
   one iteration of a `loop main` in nominal cycles, the cycle costs of Keleusma's
   nominal cost model, which are not the cycles of any particular processor and not
   seconds. `vm.arena_capacity` is the arena's size in bytes.
-- **Two limits are empirical in this release.** The arena includes a margin for a
-  shortfall in Keleusma 0.2.2's own sizing, measured rather than proven, and composite
-  arguments and native results draw on a budget the host chooses, `argument_bytes`.
-  The binding also rejects mistyped yields that Keleusma 0.2.2 accepts and that could
-  crash a read, and refuses a text-bearing yield whose type Keleusma did not record,
-  but it trusts the types Keleusma does record, so it cannot check every expression. The design document
-  records the evidence and the limits.
+- **Two limits are empirical in this release.** The arena margin and the check of
+  yield types, both described under Limitations. The design document records the
+  evidence.
 
 What the binding does guarantee is that failures surface as Python exceptions. A
 verification failure raises `VerifyError`, a runtime fault raises `VMError` and marks
@@ -182,7 +231,8 @@ keleusma.BYTECODE_VERSION  # 1, read from the linked runtime
 
 ## Examples
 
-Three runnable examples live in `examples/`, and `tests/test_examples.py` runs each one.
+Three runnable examples live in the repository's `examples/` directory, and
+`tests/test_examples.py` runs each one.
 
 ```sh
 uv run python examples/batched_update_loop.py   # 100 session lines, one thread, a tick budget
@@ -196,7 +246,7 @@ iteration, as the example explains.
 
 ## Interface at a glance
 
-Every part of this sketch is implemented, as the target for the first milestone.
+The shape of a host loop that drives a stream with events.
 
 ```python
 import keleusma

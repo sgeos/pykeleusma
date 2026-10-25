@@ -6,8 +6,9 @@ own arena, raising `VerifyError` if the verifier rejects it. Values convert by t
 entry point's declared types, with `Fixed` for fixed-point numbers. `vm.call(*args)` and
 `vm.resume(value)` return `Yielded`, `Finished` or `Reset`, and `vm.stream` drives them
 as a generator. Python callables serve as natives through `natives=` or `vm.register`,
-with bounds that Keleusma trusts but Python cannot honour. The planned interface is in
-docs/architecture/BINDING_DESIGN.md.
+with bounds that Keleusma trusts but Python cannot honour. The README at
+https://github.com/sgeos/pykeleusma lists the limitations, and the design is in
+docs/architecture/BINDING_DESIGN.md there.
 """
 
 from importlib.metadata import version as _distribution_version

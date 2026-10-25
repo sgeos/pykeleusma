@@ -21,7 +21,8 @@ completed, moved or abandoned.
 - **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
   `tests/test_packaging.py`. `SECURITY.md` and `docs/process/RELEASING.md` exist. The
   metadata passes `twine check --strict`, and the sdist installs and runs.
-- **Tasks 1 to 14 done.** Task 13 resolved the known issues and debt, and prepared for
+- **Tasks 1 to 15 done.** Task 15 made the README list the limitations before the
+  guarantees, separating those expected to clear with Keleusma 0.2.3. Task 13 resolved the known issues and debt, and prepared for
   Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
   `use external` natives run, and the yield guard covers values with no recorded type.
   `vm.step` advances one iteration per call, `vm.arena_peak_bytes` shows arena use, and
@@ -42,9 +43,10 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
 
-The operator's review items in `REVERSE_PROMPT.md`, then the one-time setup and the
-release steps in `docs/process/RELEASING.md`. Publishing is the operator's decision.
-Separately, wait for Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan.
+Publication is the operator's, by the one-time setup and the release steps in
+`docs/process/RELEASING.md`. Nothing else is owed before it. Separately, wait for
+Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan and revise the
+README's Limitations section by what clears.
 
 ## Open
 
@@ -58,8 +60,10 @@ Separately, wait for Keleusma 0.2.3 with `keleusma-wire`, then follow the migrat
 - **The yield guard trusts recorded types.** A wrong recorded type would be a Keleusma
   defect. PR 517, reported merged in `v023-20261025-pr517-merged-py`, addresses yields.
 - **With `v0.2.3`.** Unanswered requests `pykeleusma-20261025-dynamic-host-findings`,
-  `pykeleusma-20261025-book-coverage-findings` with its correction, and
-  `pykeleusma-20261025-migration-prep` and `pykeleusma-20261025-private-array`.
+  `pykeleusma-20261025-book-coverage-findings` with its correction,
+  `pykeleusma-20261025-migration-prep`, `pykeleusma-20261025-private-array` and
+  `pykeleusma-20261025-library-declarations`, the last of which indexes every open
+  item and asks which are not expected to clear in 0.2.3.
 
 ## Environment
 
@@ -88,7 +92,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 409 tests pass
+uv sync && uv run pytest    # 410 tests pass
 cargo test                  # 49 Rust tests pass
 ```
 

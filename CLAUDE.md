@@ -13,7 +13,7 @@ PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and t
 package is `keleusma`.
 
 **Status.** Cut on 2026-10-24. Version 0.2.2.0 builds against the published Keleusma 0.2.2,
-and tasks 1 to 14 of the first milestone are done. The binding covers what the Keleusma
+and tasks 1 to 15 of the first milestone are done. The binding covers what the Keleusma
 book describes, except what is blocked on Keleusma. CI tests Linux, macOS and Windows,
 and wheels are built but not published.
 Publishing is prepared and waits on the operator, as
@@ -83,6 +83,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run pyright                                # strict type checks
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
 cargo test                                    # Rust unit tests
 MIRIFLAGS=-Zmiri-tree-borrows CARGO_TARGET_DIR=target/miri cargo +nightly miri test --lib
 ```

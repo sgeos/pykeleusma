@@ -28,9 +28,20 @@ def test_the_readme_states_the_guarantee_boundary() -> None:
 
 
 def test_the_readme_names_its_empirical_limits() -> None:
-    section = _section("What is guaranteed, and what is not")
-    assert "measured rather than proven" in section
+    assert "Two limits are empirical" in _section("What is guaranteed, and what is not")
+    section = _section("Limitations")
+    assert "Arena sizing is measured, not proven." in section
     assert "cannot check every expression" in section
+
+
+def test_the_limitations_come_before_the_guarantees_and_name_keleusma_0_2_3() -> None:
+    # The limitations are placed early so that a reader meets them before relying on
+    # the binding, and the Keleusma-based ones carry the expectation for 0.2.3.
+    assert README.index("## Limitations") < README.index("## What is guaranteed")
+    section = _section("Limitations")
+    assert "expected to clear when the public Keleusma 0.2.3 is\nreleased" in section
+    assert "which 0.2.3 does not change" in section
+    assert "bytecode saved with this\nrelease will not load after the move" in section
 
 
 def test_the_readme_usage_example_runs() -> None:

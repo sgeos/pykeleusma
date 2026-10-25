@@ -680,6 +680,14 @@ this, and the free-threaded CI job is the check most likely to notice.
 
 ## Known issues in dependencies
 
+Every issue below in Keleusma 0.2.2 has been reported to the `v0.2.3` line, and
+`pykeleusma-20261025-library-declarations` indexes them. The operator expects them to
+clear with the public 0.2.3 release. A survey of the development branch found the
+mistyped yield, the signed swap failure and the text concatenation fixed there, and
+the rest unconfirmed, so each is checked when the binding moves, as
+`MIGRATION_V0_2_3.md` describes. The README lists the ones a user meets under
+Limitations.
+
 **Mistyped yields.** Described under Values. Keleusma 0.2.2's safe decode can segfault
 on a program its compiler accepts, and the binding guards against the known form.
 
@@ -698,6 +706,16 @@ verifier rejects. The binding verifies first, as described under Book coverage.
 **Generic layouts.** Keleusma 0.2.2 records only a const-generic enum's generic layout,
 and lays out type-generic instances other than as their substituted fields, as
 described under Book coverage.
+
+**Library declarations.** Keleusma 0.2.2 compiles a script's `use` line for a library
+native without comparing it with the library's signature, and a pure Rust probe of
+`shell::run` declared with its tuple reversed decoded `("", 3)` instead of
+`(0, "hi\n")`. The binding refuses the mismatch, as described under Book coverage.
+
+**Arena sizing and private data.** The auto-sized arena falls short after a stream's
+first `Reset`, described under Arena sizing. Private slots start as `()`, and a
+whole-array store to a private array fills only the first slot, described under Book
+coverage.
 
 **Miri with Stacked Borrows.** On 2026-10-24, running the Rust tests under Miri's
 default Stacked Borrows model reported undefined behaviour inside rkyv 0.8.18,
