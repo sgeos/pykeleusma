@@ -9,9 +9,10 @@ completed, moved or abandoned.
 
 ## State on 2026-10-24
 
-- **Cut.** The Keleusma project's kaizen line created this repository at the operator's
-  request and made its first commit. It has no remote yet. Creating the GitHub repository
-  is an outward-facing action that waits for the operator.
+- **Cut and published.** The Keleusma project's kaizen line created this repository at
+  the operator's request. At the operator's instruction it created the public GitHub
+  repository `sgeos/pykeleusma`, licensed 0BSD, and pushed `main`. No continuous
+  integration is configured yet.
 - **Builds.** `uv sync` builds the extension with maturin against `keleusma = "=0.2.2"` and
   PyO3 0.30.1. Three smoke tests pass, and ruff, pyright in strict mode, `cargo fmt` and
   `cargo clippy -D warnings` are clean. The extension exposes version information only.
@@ -25,7 +26,6 @@ The reasoning is in [`../architecture/BINDING_DESIGN.md`](../architecture/BINDIN
 
 ## Open with the operator
 
-- Creating the GitHub repository `sgeos/pykeleusma` and pushing.
 - Whether `Fixed` values convert to a dedicated class or to `float`.
 - Whether 0.1.0 exposes `Vm::set_native_bounds` for Python natives.
 
