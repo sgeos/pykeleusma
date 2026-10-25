@@ -22,6 +22,7 @@
 //! | The capacity overflows `usize` | `OverflowError` |
 //! | The persistent region does not fit | `RuntimeError`, which would be a binding defect |
 
+use keleusma::bytecode::BlockType;
 use keleusma::vm::{VmError, VmState};
 use pyo3::exceptions::{PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
@@ -74,6 +75,8 @@ pub struct VM {
     boundary: Boundary,
     /// Set by a runtime error, after which the VM's state is undefined.
     failed: bool,
+    /// Whether the module has a stream chunk, the only kind with a per-iteration bound.
+    has_stream: bool,
 }
 
 #[pymethods]
@@ -83,19 +86,45 @@ impl VM {
     fn new(module: PyRef<'_, Module>, argument_bytes: usize) -> PyResult<Self> {
         // `Vm::new` consumes the module, so the VM takes a copy and the Python module
         // stays usable for further VMs.
+        let has_stream = module
+            .inner()
+            .chunks
+            .iter()
+            .any(|chunk| chunk.block_type == BlockType::Stream);
         let vm =
             OwnedVm::new(module.inner().clone(), argument_bytes).map_err(construction_error)?;
         Ok(Self {
             vm,
             boundary: module.boundary().clone(),
             failed: false,
+            has_stream,
         })
     }
 
-    /// The arena's total capacity in bytes.
+    /// The arena's total capacity in bytes, which bounds the memory the script itself
+    /// can use. See "Worst-case figures" in the design document for what it covers.
     #[getter]
     fn arena_capacity(&self) -> usize {
         self.vm.arena_capacity()
+    }
+
+    /// The worst-case execution time of one iteration of a `loop main`, in Keleusma's
+    /// nominal cost units, or `None` for a module without a stream.
+    ///
+    /// The units are unitless, on the scale of Keleusma's per-instruction costs, not
+    /// cycles or seconds. The figure covers the script and the declared bounds of any
+    /// natives, never Python or the binding's own conversions.
+    #[getter]
+    fn wcet_per_iteration(&self) -> PyResult<Option<u32>> {
+        // Keleusma reports zero for a module with no stream chunk, which would read as
+        // a free iteration rather than an absent figure.
+        if !self.has_stream {
+            return Ok(None);
+        }
+        self.vm
+            .wcet_per_iteration()
+            .map(Some)
+            .map_err(|e| vm_error(&e))
     }
 
     /// The bytes of the arena reserved for composite arguments.

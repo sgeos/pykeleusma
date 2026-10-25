@@ -45,6 +45,11 @@ remembers its width. Out-of-range integers raise `OverflowError` instead of wrap
 After a runtime error a VM reports `failed` and refuses further use, because Keleusma
 leaves its state undefined.
 
+For scheduling, `vm.wcet_per_iteration` gives the worst-case time of one iteration of a
+`loop main` in Keleusma's nominal cost units, which are not cycles or seconds, and
+`vm.arena_capacity` gives the arena's size in bytes. Both cover the script and the
+declared bounds of natives only, never Python or the binding's conversions.
+
 A VM reserves `argument_bytes`, 4096 by default, of its arena for composite arguments
 such as tuples carrying text. A host that passes larger values gives a larger figure. The first milestone is in [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md)
 and the planned interface in

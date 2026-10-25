@@ -13,19 +13,20 @@ completed, moved or abandoned.
 - **Continuous integration.** `.github/workflows/ci.yml` runs on every push to `main`
   and every pull request. It covers Linux and macOS with Python 3.12 and 3.15, every
   local check, and the Rust tests under Miri with Tree Borrows. Roadmap task 10 is done.
-- **Tasks 1 to 5 done.** `keleusma.compile` returns a `Module`, which keeps the declared
+- **Tasks 1 to 5b done.** `keleusma.compile` returns a `Module`, which keeps the declared
   types of `main`, or raises a located `SourceError`. `keleusma.VM` verifies the module
   and owns its arena. `vm.call(*args)` and `vm.resume(value)` convert by declared type
-  and return `Yielded`, `Finished` or `Reset`. `vm.failed` is set after a runtime error,
-  and the VM then refuses further use.
+  and return `Yielded`, `Finished` or `Reset`. `vm.failed` is set after a runtime error.
+  `vm.wcet_per_iteration` and `vm.arena_capacity` give the worst-case figures, with
+  their units documented.
 - **Memory-safety guard.** Keleusma 0.2.2 accepts some mistyped yields that make its
   safe decode segfault. `src/yield_check.rs` rejects the known form at compile time.
 - **Roadmap.** Includes the changes the operator approved for Dromon on 2026-10-25.
 
 ## Next step
 
-Task 5b, `vm.wcet_per_iteration` with documented units, since `vm.arena_capacity`
-already exists. Then task 6, `vm.stream(...)` as a generator.
+Task 6, `vm.stream(...)` as a generator, ending on `Finished` and giving `Reset` a stated
+meaning.
 
 ## Open
 
@@ -69,7 +70,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 137 tests pass
+uv sync && uv run pytest    # 143 tests pass
 cargo test                  # 26 Rust tests pass
 ```
 

@@ -13,10 +13,10 @@ PyGame frame loop or a NumPy computation. The distribution is `pykeleusma` and t
 package is `keleusma`.
 
 **Status.** Cut on 2026-10-24. The extension builds against the published Keleusma 0.2.2.
-Tasks 1 to 5 and 10 of the first milestone are done, so `keleusma.compile` works with
+Tasks 1 to 5b and 10 of the first milestone are done, so `keleusma.compile` works with
 located errors, `keleusma.VM` verifies a module and owns a correctly sized arena, values
-convert by declared type, `vm.call` and `vm.resume` run scripts, and GitHub Actions
-checks every push and pull request. The first milestone is
+convert by declared type, `vm.call` and `vm.resume` run scripts, the worst-case figures are
+readable, and GitHub Actions checks every push and pull request. The first milestone is
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md) and the design is
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md).
 

@@ -232,6 +232,13 @@ impl OwnedVm {
         self.cell.with_dependent_mut(|_arena, vm| vm.call(args))
     }
 
+    /// Keleusma's worst-case execution time for one stream iteration, in its nominal
+    /// cost units, including the declared bounds of any registered natives.
+    pub fn wcet_per_iteration(&self) -> Result<u32, VmError> {
+        self.cell
+            .with_dependent(|_arena, vm| vm.wcet_per_iteration())
+    }
+
     /// Resume after a yield or a reset, with the same validity rule as [`Self::call`].
     pub fn resume(&mut self, input: Value) -> Result<VmState, VmError> {
         self.cell.with_dependent_mut(|_arena, vm| vm.resume(input))

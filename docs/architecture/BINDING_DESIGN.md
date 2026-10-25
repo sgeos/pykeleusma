@@ -210,6 +210,37 @@ from one module on one thread are each resumed in turn over four ticks. A stream
 tuple arguments runs 10,000 iterations from Python. A mutation that stopped marking a
 failed VM made both failure tests fail.
 
+## Worst-case figures, roadmap task 5b
+
+**Implemented on 2026-10-25.** Two properties give a scheduler, such as Dromon's batched
+update loop, the figures it budgets with.
+
+| Property | Unit | Source | Covers |
+|---|---|---|---|
+| `vm.wcet_per_iteration` | Keleusma's nominal cost units, an `int` | `Vm::wcet_per_iteration` | One iteration of a `loop main`, the script and the declared bounds of any natives |
+| `vm.arena_capacity` | Bytes, an `int` | The arena plan described under Arena sizing | The memory the script itself can use |
+
+- **Time units.** Keleusma's own documentation calls them "the nominal cost model's
+  unitless cycle space", on the scale of its per-instruction costs. They are not
+  processor cycles or seconds. Converting them needs a calibrated cost model, which
+  Keleusma's cookbook describes and 0.1.0 does not include. Dromon's integration document
+  expected pipelined cycles, which this corrects.
+- **No stream, no figure.** Keleusma returns zero for a module without a stream chunk, so
+  a `fn main` or a `yield main` would read as free. The binding returns `None` for
+  those instead.
+- **Not covered.** Neither figure includes Python, the binding's value conversions, the
+  arguments' Python objects, or anything the host does between resumes. Keleusma's
+  guarantees stop at the script and the bounds declared for natives, and a Python
+  callable registered as a native has no bound.
+- **Memory caveat.** The arena capacity includes the empirical regrowth margin and the
+  host's argument budget, so it is an upper bound on the script's arena use only as far
+  as that margin holds, as Arena sizing explains.
+
+**Evidence.** The time grows with the work in an iteration, including work in called
+functions, and does not change with the arena budget or after running. A deeper stack
+gives a larger arena, and the argument budget adds to it exactly. A mutation that let
+Keleusma's zero through made the test of the `None` case fail.
+
 ## Values, roadmap task 4
 
 **Implemented on 2026-10-25.** Values convert by the entry point's declared types, in
