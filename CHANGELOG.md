@@ -7,6 +7,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `keleusma.VM(module, *, argument_bytes=4096)`, a verified VM that owns an arena sized
+  to survive `Reset` and to hold composite arguments, with `arena_capacity` and
+  `argument_bytes` properties. The exceptions `VerifyError` and `VMError`, and the
+  constant `DEFAULT_ARGUMENT_BYTES`. It replaces the temporary `_OwnedVmProbe`.
+
 - `keleusma.compile(source)`, returning an immutable `keleusma.Module`, and the
   exceptions `KeleusmaError`, `SourceError`, `LexError`, `ParseError` and
   `CompileError`. A source error carries `msg`, `lineno` and a character-based `colno`.
@@ -21,6 +26,9 @@ All notable changes are recorded here. The format follows
   repository.
 
 ### Fixed
+
+- An arena sized by Keleusma's footprint alone failed on the resume after a stream's
+  first `Reset`. The arena now includes a regrowth margin, as the design records.
 
 - `uv sync` now rebuilds the extension after a change to the Rust sources, through
   `cache-keys` in `pyproject.toml`. Before, it kept a stale build.

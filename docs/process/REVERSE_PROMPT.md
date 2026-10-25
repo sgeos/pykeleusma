@@ -4,30 +4,31 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, continuous integration and task 2
+## 2026-10-25, task 3
 
-**Goal.** Set up remote continuous integration, complete task 1 if not yet complete,
-complete task 2, and commit, push and merge all work.
+**Goal.** Complete task 3, then commit, push and merge all work.
 
-**Task 1.** Already complete and merged on 2026-10-24. Its arena sizing defect belongs to
-task 3 under the approved roadmap, so nothing was added to task 1.
+**Done.** `keleusma.VM(module, *, argument_bytes=4096)` replaces `_OwnedVmProbe`. It
+verifies the module, raising `VerifyError` with the verifier's message, which names the
+chunk and the failure. Other Keleusma errors raise `VMError`. The arena is the sum of
+Keleusma's footprint, the persistent region, twice the working set as a regrowth
+margin, and a host-chosen argument budget. `vm.arena_capacity` and `vm.argument_bytes`
+report it.
 
-**Continuous integration, task 10.** `.github/workflows/ci.yml` runs every local check on
-Linux and macOS with Python 3.12 and 3.15, and the Rust tests under Miri with Tree
-Borrows. Actions are pinned to commit hashes, using releases at least two weeks old.
-The workflow has read-only permissions and no secrets.
+**Why the margin.** `v0.2.3` has not answered how a host should size the arena, beyond
+calling a margin a workaround. Measurements on seven scripts showed that the shortfall
+after a `Reset` is one doubling of the operand stack, which the margin covers with at
+least 48 bytes to spare. Composite arguments cost about twice their text length and
+accumulate across the yields of one iteration, so they need a budget the host chooses.
 
-**Task 2.** `keleusma.compile(source)` returns an immutable `Module` and releases the GIL
-while compiling. Errors are Python classes in `keleusma._errors`, following
-`json.JSONDecodeError`. `SourceError` derives from `KeleusmaError` and `ValueError`, and
-carries `msg`, `lineno` and `colno`. The column counts characters, converted from
-Keleusma's byte column. A line of 0 from Keleusma becomes `None`.
+**Verification.** 34 Python tests and 15 Rust tests passed locally, including seven
+word streams and one tuple stream run for 10,000 iterations in an automatically sized
+arena. A mutation that removed the margin made the word-stream tests fail. Miri under
+Tree Borrows passed 13 tests and skipped the two long runs by design. `ruff`, `pyright`,
+`cargo fmt` and `cargo clippy` were clean.
 
-**Verification.** Locally, 26 Python tests on Python 3.12 and 3.15.1, 8 Rust tests,
-`ruff`, `pyright` in strict mode, `cargo fmt` and `cargo clippy` were clean. The remote
-result is in the pull request.
+**Not proven.** The margin is empirical. A script that needs two regrowths would exceed
+it, and none was found. The 10,000-iteration test runs in Rust, because Python cannot
+drive a stream until task 5.
 
-**Not covered.** No test shows that the GIL is released during compilation. The memory
-test's behaviour on Linux is first checked by this CI run.
-
-**Next.** Task 3, `keleusma.VM(module)` with arena sizing that survives `Reset`.
+**Next.** Task 4, value conversion by declared type.

@@ -54,3 +54,19 @@ class ParseError(SourceError):
 
 class CompileError(SourceError):
     """The compiler rejected a program that parsed, for example on a type error."""
+
+
+class VerifyError(KeleusmaError, ValueError):
+    """Keleusma's verifier rejected a module, so no VM was built.
+
+    The message is the verifier's, naming the chunk and the failure. It derives from
+    `ValueError` because the module passed in is the faulty value.
+    """
+
+
+class VMError(KeleusmaError, RuntimeError):
+    """A VM failed while constructing or running, other than by verification.
+
+    The message is Keleusma's description of the fault, for example a division by zero
+    or an arena too small for an argument.
+    """
