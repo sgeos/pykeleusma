@@ -24,6 +24,13 @@ completed, moved or abandoned.
 - **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
   `tests/test_packaging.py`. `SECURITY.md` and `docs/process/RELEASING.md` exist. The
   metadata passes `twine check --strict`, and the sdist installs and runs.
+- **GitHub settings,** set on 2026-10-25 at parity with the Keleusma and
+  angelssword-adventurers-creator repositories where sensible. Topics, merged branches
+  deleted, no wiki or projects, private vulnerability reporting and Dependabot alerts
+  on, and a ruleset blocking force-pushes to and deletion of `main`. Keleusma's
+  required linear history is not copied, because this repository merges with merge
+  commits. No status check is required, because path filters skip workflows. The
+  README carries badges, and `.github` holds issue and pull request templates.
 - **Tasks 1 to 15 done.** Task 15 made the README list the limitations before the
   guarantees, separating those expected to clear with Keleusma 0.2.3. Task 13 resolved the known issues and debt, and prepared for
   Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
@@ -67,7 +74,9 @@ README's Limitations section by what clears.
   `pykeleusma-20261025-book-coverage-findings` with its correction,
   `pykeleusma-20261025-migration-prep`, `pykeleusma-20261025-private-array` and
   `pykeleusma-20261025-library-declarations`, the last of which indexes every open
-  item and asks which are not expected to clear in 0.2.3.
+  item and asks which are not expected to clear in 0.2.3. `v0.2.3` acknowledged it
+  in `v023-20261025-library-declarations-ack` as an unverified candidate defect, with
+  no statement yet on which items clear.
 
 ## Environment
 
@@ -96,7 +105,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 410 tests pass
+uv sync && uv run pytest    # 411 tests pass
 cargo test                  # 49 Rust tests pass
 ```
 

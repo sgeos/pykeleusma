@@ -15,6 +15,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- README badges, issue templates for bugs and requests, contact links for private
+  vulnerability reports and for Keleusma itself, and a pull request checklist. A test
+  keeps the static Keleusma and Python badges in step with the linked runtime and the
+  package metadata.
+
 - Continuous integration builds the source distribution on FreeBSD 15.1 and runs the
   tests there. To share the account's runners, a pull request now runs a reduced set of
   jobs and one quick wheel, the full set runs on `main`, on a pull request labelled

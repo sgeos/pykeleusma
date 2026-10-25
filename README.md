@@ -1,5 +1,13 @@
 # pykeleusma
 
+[![CI](https://github.com/sgeos/pykeleusma/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sgeos/pykeleusma/actions/workflows/ci.yml)
+[![Wheels](https://github.com/sgeos/pykeleusma/actions/workflows/wheels.yml/badge.svg?branch=main)](https://github.com/sgeos/pykeleusma/actions/workflows/wheels.yml)
+[![PyPI](https://img.shields.io/pypi/v/pykeleusma.svg)](https://pypi.org/project/pykeleusma/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Keleusma 0.2.2](https://img.shields.io/badge/keleusma-0.2.2-orange)](https://crates.io/crates/keleusma/0.2.2)
+[![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](https://github.com/sgeos/pykeleusma/blob/main/LICENSE)
+[![Status: early development](https://img.shields.io/badge/status-early%20development-yellow)](https://github.com/sgeos/pykeleusma#status)
+
 Python bindings for [Keleusma](https://github.com/sgeos/keleusma), a total functional
 stream processor whose programs have statically bounded worst-case execution time and
 memory use. The goal is to run Keleusma scripts inside a Python program, for example
