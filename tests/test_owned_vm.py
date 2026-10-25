@@ -128,3 +128,26 @@ def test_another_thread_cannot_use_the_vm() -> None:
     assert not isinstance(errors[0], Exception)
     assert "unsendable" in str(errors[0])
     assert vm.call() == ("finished", 42)
+
+
+def test_a_vm_created_on_a_worker_thread_runs_there() -> None:
+    # The supported threading model. A VM belongs to the thread that creates it, so
+    # concurrent programs give each VM a dedicated thread and create it there.
+    results: list[tuple[str, int | None]] = []
+    errors: list[BaseException] = []
+
+    def own_and_use() -> None:
+        try:
+            vm = _OwnedVmProbe(ANSWER)
+            results.append(vm.call())
+            results.append(vm.call())
+        except BaseException as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=own_and_use) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert results == [("finished", 42)] * 8

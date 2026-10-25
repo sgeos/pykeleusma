@@ -84,12 +84,30 @@ checked to fit `u32` and raise `OverflowError` otherwise. The documentation must
 values attestations that the host makes and Keleusma trusts, which Python code cannot
 itself honour.
 
-**Open risk for task 7.** The arena is sized at construction with no native memory
-bounds, because no natives exist yet. A native registered later with a large memory
-bound is therefore not covered by the capacity. In a partial reading of the 0.2.2 call
-path, no re-check of native bounds against the arena capacity was found, so this is
-unverified in both directions. Task 7 must establish what Keleusma does and either size
-the arena after registration or reject bounds the arena cannot hold.
+**The arena must cover the declared bounds.** A native's memory bound adds to the
+module's worst-case memory use, so it must be known when the arena is sized.
+
+- **Fact.** Keleusma 0.2.2 provides two mechanisms. `auto_arena_capacity_for(module,
+  native_wcmu)` sizes an arena from per-native bounds, given in the order of the module's
+  `native_names` table, as the Keleusma cookbook recipe "Auto-sizing the arena from the
+  module" describes. `Vm::verify_resources()` re-checks the module against the arena
+  after natives are registered and their bounds set, as `examples/wcmu_attestation.rs`
+  does.
+- **Fact.** Neither `call` nor `resume` runs `verify_resources` by itself. A host that
+  raises a bound after construction without calling it runs with an arena the verifier
+  never admitted.
+- **Planned for task 7.** Natives and their bounds are declared when the VM is built,
+  as in `keleusma.VM(module, natives={"host::draw": draw})`, where a value is either a
+  bare callable with Keleusma's default bounds or `keleusma.native(callable, wcet=...,
+  wcmu_bytes=...)`. The binding computes the bound slice in `native_names` order, sizes
+  the arena with it, builds and registers, and then calls `verify_resources` as a check
+  of its own sizing. `vm.register` and `vm.set_native_bounds` after construction remain
+  for compatibility with the Rust interface, and each runs `verify_resources`, raising
+  if the existing arena cannot hold the new bound. No path leaves a bound uncovered.
+- **Inference.** Opaque host values do not change this. In an arena-resident composite,
+  Keleusma stores an opaque as an index into a registry on the VM, not as the
+  `Arc<dyn HostOpaque>` fat pointer itself, so its arena cost is one word. Opaques are
+  outside 0.1.0 in any case.
 
 ## Values
 
@@ -120,7 +138,10 @@ bits is part of the script's type, `Fixed<N>`, and is not stored in the value.
 `raw` as an `int` and `frac_bits` as an `int`. Its value is exactly `raw / 2**frac_bits`.
 It registers as a `numbers.Rational`, with `numerator`, `denominator`, `__float__`,
 `as_fraction()` returning a `fractions.Fraction`, and equality and hashing that agree with
-`Fraction` of the same value. That is the standard library's convention for exact
+`Fraction` of the same value. Conversion to a float is spelled `float(value)`, through
+`__float__`, which is the Python idiom that `Fraction` and `Decimal` follow, rather than
+a `to_float()` method. `int(value)`, `round(value)` and `math.floor(value)` work the same
+way through the corresponding special methods. That is the standard library's convention for exact
 numeric types, so a `Fixed` mixes with `Fraction`, `int` and `float` as a Python user
 expects, and nothing is lost on a round trip. `float` was rejected because a 64-bit raw
 value does not fit the 53-bit mantissa, and a bare `Fraction` was rejected because it
@@ -145,6 +166,11 @@ and it originates in PyO3. The alternative, an `unsafe impl Send` with a manual 
 check, was rejected as unsound, because Python can drop the object on any thread, and
 PyO3's `unsendable` handles that case where a manual check would not. The behaviour is
 pinned by `tests/test_owned_vm.py`.
+
+**Confirmed on 2026-10-24 by the operator.** Keleusma contexts are not thread safe, and
+thread-safe programs give each context a dedicated thread. The binding matches that
+model. A VM belongs to the thread that creates it, and a test creates and runs VMs on
+several worker threads at once.
 
 A native closure must take the GIL before it calls Python. Free-threaded Python is out
 of scope for 0.1.0.
