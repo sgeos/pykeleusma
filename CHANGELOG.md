@@ -7,6 +7,9 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `vm.stream(*args, inputs=None)`, a generator yielding `Yielded` and `Reset` states and
+  returning the `Finished` value, with resume inputs from an iterable or from `send`.
+
 - `vm.wcet_per_iteration`, Keleusma's worst-case time for one stream iteration in its
   nominal cost units, or `None` for a module without a stream, with the units and the
   coverage of it and of `vm.arena_capacity` documented.

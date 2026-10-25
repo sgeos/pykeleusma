@@ -1,5 +1,5 @@
-//! Roadmap tasks 3 and 5. `keleusma.VM(module)`, a verified VM with its own arena, and
-//! its `call` and `resume`.
+//! Roadmap tasks 3, 5 and 6. `keleusma.VM(module)`, a verified VM with its own arena,
+//! its `call` and `resume`, and `stream`.
 //!
 //! The ownership and the arena sizing live in [`crate::owned_vm`]. This module is the
 //! Python face of it, maps failures onto Python exceptions, and converts values by the
@@ -26,7 +26,7 @@ use keleusma::bytecode::BlockType;
 use keleusma::vm::{VmError, VmState};
 use pyo3::exceptions::{PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::compile::{Boundary, Module};
 use crate::convert::{ReadContext, to_py, to_value};
@@ -187,6 +187,27 @@ impl VM {
         let input = to_value(value, ty)?;
         let outcome = self.vm.resume(input);
         self.state(py, outcome)
+    }
+
+    /// Drive the VM through Python's generator protocol, yielding each `Yielded` and
+    /// `Reset` and returning the `Finished` value. Resume inputs come from `inputs`
+    /// or from `send`. The semantics, including the meaning of `Reset`, are
+    /// documented in `keleusma._stream`, which implements the generator, because a
+    /// generator is far simpler to write and to read in Python than through PyO3.
+    #[pyo3(signature = (*args, inputs = None))]
+    fn stream<'py>(
+        slf: Bound<'py, Self>,
+        args: &Bound<'py, PyTuple>,
+        inputs: Option<Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        let mut positional = vec![slf.into_any()];
+        positional.extend(args.iter());
+        let keywords = PyDict::new(py);
+        keywords.set_item("inputs", inputs)?;
+        py.import("keleusma._stream")?
+            .getattr("stream")?
+            .call(PyTuple::new(py, positional)?, Some(&keywords))
     }
 
     /// Whether an earlier runtime error has made this VM unusable.
