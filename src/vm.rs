@@ -268,6 +268,8 @@ fn private_values(module: &Module, private: Option<&Bound<'_, PyAny>>) -> PyResu
             Ok(object) => match (element, field_ty) {
                 (None, ty) if is_scalar(ty) => to_value(&object, ty)?,
                 (None, ty) => {
+                    // KELEUSMA-0.2.2: re-check on an upgrade whether composite private
+                    // values survive `initial_data`, and if so convert them here.
                     return Err(PyTypeError::new_err(format!(
                         "the private field `{field}` is {}, a composite; Keleusma 0.2.2 \
                          clears the composite body pool after seeding the slots, so only \
@@ -349,6 +351,9 @@ fn shared_slot_offset(
 /// converts a host callable's values by the script's declaration on both sides. A bare
 /// `use` line and a module without declarations convert untyped, by each value's own
 /// tag, and are not checked.
+///
+/// KELEUSMA-0.2.2: no check was found on the 0.2.3 branch. If Keleusma adds one, as
+/// `pykeleusma-20261025-library-declarations` asks, this may go.
 fn check_library_declarations(
     libraries: &[Library],
     boundary: &Boundary,

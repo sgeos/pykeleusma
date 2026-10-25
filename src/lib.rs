@@ -1,10 +1,19 @@
 //! Python bindings for the Keleusma scripting language.
 //!
-//! The binding is planned in `docs/architecture/BINDING_DESIGN.md`, and the first
-//! milestone in `docs/roadmap/V0_1_0.md`. Task 1, owning the arena and the VM together,
-//! lives in [`owned_vm`], task 2, compilation, in [`compile`], task 3, the Python `VM`
-//! class, in [`vm`], and task 4, value conversion by declared type, in [`convert`] and
-//! [`types`], and task 7, Python natives, in [`natives`].
+//! The design is `docs/architecture/BINDING_DESIGN.md`. The modules are private, so
+//! their names are plain text here rather than links.
+//!
+//! - `owned_vm` owns the arena together with the VM that borrows it.
+//! - `compile` compiles source and loads bytecode into the Python `Module`.
+//! - `vm` is the Python `VM` class, for calls, streams, data and hot swap.
+//! - `types` reads declared types, and `convert` converts values by them.
+//! - `yield_check` refuses yields whose value does not match the declared type.
+//! - `natives`, `external` and `libraries` serve natives from Python callables, from
+//!   `use external` declarations and from Keleusma's bundled libraries.
+//! - `opaque` carries Python objects as opaque host values.
+//! - `crypto` checks the keys for signed and encrypted modules.
+//! - `compat` holds every call that Keleusma 0.2.3 changes, and `canaries` pins the
+//!   0.2.2 behaviours the binding works around.
 
 mod canaries;
 mod compat;

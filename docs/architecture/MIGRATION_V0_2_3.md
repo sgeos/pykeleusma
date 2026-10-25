@@ -122,3 +122,6 @@ confirmed against the published release.
   `src/natives.rs`.
 - Fixes for items 5, 6 and 9, and for the footprint analysis's unbounded recursion on
   an unverified module.
+- A check of a script's `use` line for a library native against the library's
+  signature, which would let `src/vm.rs` drop its own comparison. Sent as
+  `pykeleusma-20261025-library-declarations`.

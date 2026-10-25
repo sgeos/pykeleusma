@@ -15,6 +15,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- A Limitations section near the top of the README. It separates the limitations that
+  come from Keleusma 0.2.2, which are expected to clear with the public Keleusma 0.2.3,
+  from those of the binding's own design, and warns that bytecode saved now will not
+  load after the move to 0.2.3. CI now fails on any rustdoc warning.
+
 - More wheels. Linux with musl, such as Alpine, on x86-64 and ARM64, Windows on ARM64,
   and free-threaded CPython 3.14t and 3.15t on every platform, 24 wheels in all. A
   review of the state shared between threads, a concurrency test, and a test that the

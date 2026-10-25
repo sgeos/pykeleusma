@@ -80,6 +80,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Rust documentation
+        # The modules are private, so private items are documented too, and a broken
+        # link fails the job.
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --document-private-items
+
       - name: Rust tests
         # The test binary links libpython, so it needs the interpreter set up
         # above, and on Linux the directory that holds its shared library.
