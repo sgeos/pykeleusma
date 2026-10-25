@@ -7,6 +7,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `vm.wcet_per_iteration`, Keleusma's worst-case time for one stream iteration in its
+  nominal cost units, or `None` for a module without a stream, with the units and the
+  coverage of it and of `vm.arena_capacity` documented.
+
 - `vm.call(*args)` and `vm.resume(value)`, returning the frozen dataclasses
   `keleusma.Yielded`, `Finished` and `Reset`, and `vm.failed`, set after a runtime error
   leaves the VM's state undefined. They replace the private `VM._call` test hook.

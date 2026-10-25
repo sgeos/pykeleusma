@@ -4,29 +4,31 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, task 5
+## 2026-10-25, tasks 1 to 5b
 
-**Goal.** Complete task 5, then commit, push and merge all work.
+**Goal.** Complete all tasks from 1 to 5b, skipping those already done, then commit,
+push and merge all work.
 
-**Done.** `vm.call(*args)` and `vm.resume(value)` replace the private test hook. They
-convert values by the declared types and return frozen dataclasses, `Yielded(value)`,
-`Finished(value)` or `Reset()`, which work with `==` and `match`.
+**Already done.** Tasks 1 to 5, merged through pull requests 1 to 7. Only task 5b
+remained.
 
-**Facts observed on Keleusma 0.2.2.** A `yield main` finishes after its last yield. A
-`loop main` returns `Reset` on the resume that completes an iteration, and the next
-resume starts another. The VM does not check a resumed value's type, so the binding's
-conversion by the single parameter's type is the only check. Keleusma documents the
-state after a runtime error as undefined, so the binding marks such a VM `failed` and
-refuses further use. A conversion error and `NotSuspended` leave it usable.
+**Done, task 5b.** `vm.wcet_per_iteration` returns Keleusma's worst-case time for one
+iteration of a `loop main`, in its nominal cost units. `vm.arena_capacity`, added in
+task 3, gives the arena's size in bytes. The design document, the README and the
+docstrings state the units and that both figures cover only the script and the declared
+bounds of natives, never Python or the binding's conversions.
 
-**Verification.** 137 Python tests and 26 Rust tests passed locally. They include a
-coroutine that yields three values and finishes, 1,000 VMs on one thread each resumed
-in turn, and 10,000 stream iterations with tuple arguments driven from Python. A
-mutation that stopped marking failed VMs made both failure tests fail. The README
-example was run and its comments hold. `ruff`, `pyright`, `cargo fmt` and `cargo clippy`
+**Fact.** Keleusma reports a time of zero for a `fn main` or a `yield main`, because only
+a stream chunk has a per-iteration bound. The binding returns `None` for those, so a
+missing figure cannot be read as a free iteration.
+
+**Correction for Dromon.** Its integration document expected pipelined cycles. The units
+are Keleusma's unitless nominal cost units, which need a calibrated cost model to become
+cycles or seconds.
+
+**Verification.** 143 Python tests and 26 Rust tests passed locally. The tests compare
+figures between scripts rather than pinning constants. A mutation that let Keleusma's
+zero through made the `None` test fail. `ruff`, `pyright`, `cargo fmt` and `cargo clippy`
 were clean.
 
-**Not covered.** Recovering a failed VM through Keleusma's `Vm::reset_after_error` is
-not offered. A failed VM must be replaced.
-
-**Next.** Task 5b, the worst-case time figure, then task 6, `vm.stream`.
+**Next.** Task 6, `vm.stream(...)` as a generator.
