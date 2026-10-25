@@ -57,7 +57,14 @@ VMs through the temporary `_OwnedVmProbe` class and compares peak resident memor
 control that keeps as many alive. A deliberate mutation that leaked one VM per
 construction made that test fail, so the test can detect the leak it guards against.
 
-**Arena sizing.** The capacity is `vm::auto_arena_capacity_for(module, &[])` plus
+**Defect found on 2026-10-25.** The capacity below is too small. In Keleusma 0.2.2 the
+resume after the first `Reset` fails with `OutOfArena` in an arena of exactly the auto
+size, and so does a call with a composite argument. Peak use was 504 bytes against an
+auto size of 184 for a minimal stream. The failure is a clean error. Roadmap task 3 fixes
+the sizing, and the method waits on the `v0.2.3` reply to
+`pykeleusma-20261025-dynamic-host-findings`.
+
+**Arena sizing as implemented.** The capacity is `vm::auto_arena_capacity_for(module, &[])` plus
 `vm::required_persistent_capacity_for(module)`, and the persistent region is reserved
 before the VM is built. Keleusma 0.2.2 does not state whether the footprint already
 includes the persistent region, so the two are added, at a cost of at most one
@@ -125,6 +132,19 @@ VM's arena and must be read before the next `resume` or before the VM is dropped
 | Tuples and arrays | `tuple` and `list` |
 | `Fixed` | `keleusma.Fixed`, an immutable exact value, as described below |
 | Structs and enums | Open, possibly dictionaries or generated classes, after 0.1.0 |
+
+### Composite values
+
+**Fact.** Keleusma 0.2.2 stores a tuple or array of scalars and literal strings as flat
+bytes with no per-field types. `TupleBody::elements()` panics on that form, so the binding
+must never call it on a value it has not checked. `ChunkSignature` records only the kind
+and byte size of a flat composite.
+
+**Planned for task 4.** Decode by the entry point's declared parameter and yield types,
+read from the parsed program that `keleusma.compile` already holds, and encode arguments
+the same way. Whether `value_layout::LayoutDescriptor` matches the compiler's layout is
+asked of `v0.2.3`. Until that is answered, round-trip tests of every supported shape are
+the evidence.
 
 ### Fixed-point values
 
