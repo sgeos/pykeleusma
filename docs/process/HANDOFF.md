@@ -11,8 +11,11 @@ completed, moved or abandoned.
 
 - **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
 - **Continuous integration.** `ci.yml` covers Linux, macOS and Windows with Python
-  3.12 and 3.15, Linux also with 3.13 and 3.14, every local check, and Miri with Tree
-  Borrows. `wheels.yml` builds and smoke-tests wheels for five platforms and the sdist,
+  3.12 and 3.15, Linux also with 3.13, 3.14 and free-threaded 3.14t, every local check,
+  and Miri with Tree Borrows. `wheels.yml` builds 24 wheels on eight platforms, glibc
+  and musl Linux, macOS and Windows on x86-64 and ARM64, each with a stable-ABI wheel
+  and free-threaded 3.14t and 3.15t wheels, smoke-tests all but the free-threaded musl
+  ones, builds the sdist,
   and has a publish job that runs only from a pushed `v*` tag in the `pypi`
   environment. Nothing has been published.
 - **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
@@ -85,7 +88,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 406 tests pass
+uv sync && uv run pytest    # 409 tests pass
 cargo test                  # 49 Rust tests pass
 ```
 

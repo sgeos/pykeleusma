@@ -663,8 +663,20 @@ thread-safe programs give each context a dedicated thread. The binding matches t
 model. A VM belongs to the thread that creates it, and a test creates and runs VMs on
 several worker threads at once.
 
-A native closure must take the GIL before it calls Python. Free-threaded Python is out
-of scope for 0.1.0.
+A native closure must take the GIL before it calls Python.
+
+**Free-threaded Python, reviewed on 2026-10-25.** Fact. PyO3 0.30 declares the module
+safe without the GIL by default, observed as `sys._is_gil_enabled()` staying false after
+import on CPython 3.14t. That declaration rests on this review of the state shared
+between threads. `VM` is `unsendable`, so only its creating thread reaches it. `Module`
+is `frozen`, and the compiler checks that it is `Send` and `Sync`. The process-wide
+state is the live-VM counter, an atomic, and the interned opaque type names, behind a
+mutex. The external-native frames and the cost table are thread-local. The Python
+package holds no mutable module state. `tests/test_vm.py` runs eight threads through
+compiling, opaque names, external natives and a shared module at once, which passed
+50 repeated runs under 3.14t, and `tests/test_smoke.py` fails if the GIL comes back on.
+Inference. A future change that adds shared mutable state without a lock would break
+this, and the free-threaded CI job is the check most likely to notice.
 
 ## Known issues in dependencies
 

@@ -33,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Interpreters",
@@ -56,6 +57,8 @@ dev = [
     # Python the matrix tests, up to 3.15.
     "numpy==2.5.4",
     "pygame-ce==2.5.8",
+    # The list PyPI checks classifiers against, so a typo fails a test, not an upload.
+    "trove-classifiers==2026.9.21.13",
 ]
 
 [tool.uv]

@@ -45,3 +45,10 @@ def test_the_readme_has_no_relative_links() -> None:
     targets = re.findall(r"\]\(([^)]+)\)", readme)
     assert targets
     assert [t for t in targets if not t.startswith(("https://", "#"))] == []
+
+
+def test_every_classifier_is_one_pypi_accepts() -> None:
+    from trove_classifiers import classifiers
+
+    declared: list[str] = PROJECT["project"]["classifiers"]
+    assert [c for c in declared if c not in classifiers] == []
