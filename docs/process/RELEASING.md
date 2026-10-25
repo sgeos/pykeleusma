@@ -33,7 +33,7 @@ publishes is the operator's, and an agent prepares the release only up to the ta
    because the publish job refuses files whose names do not match it.
 3. **Approve the deployment.** The wheels workflow builds and smoke-tests every
    distribution again, then waits for approval of the `pypi` environment. Approving it
-   uploads the five wheels and the source distribution.
+   uploads the 24 wheels and the source distribution.
 4. **Check the result.** In a clean environment, `pip install pykeleusma==0.2.2.0` and
    run a script, then confirm the project page renders the README.
 

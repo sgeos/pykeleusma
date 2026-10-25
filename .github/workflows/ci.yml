@@ -88,6 +88,29 @@ jobs:
           LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
         run: cargo test
 
+  free-threaded:
+    # CPython without the GIL, which runs the threads of the concurrency tests truly
+    # in parallel. pygame-ce has no free-threaded build, so the frame-loop test skips
+    # here, and the job installs only what the other tests need.
+    name: test (ubuntu-latest, Python 3.14t)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14t"
+
+      - name: Build and install the extension and the test tools
+        run: python -m pip install . pytest==9.1.1 numpy==2.5.4 trove-classifiers==2026.9.21.13
+
+      - name: Python tests
+        # Without -X gil=0, so that an extension that stopped declaring itself safe
+        # without the GIL would re-enable it, which tests/test_smoke.py detects.
+        run: python -m pytest -p no:cacheprovider
+
   miri:
     name: miri (Tree Borrows)
     runs-on: ubuntu-latest

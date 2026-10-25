@@ -1,6 +1,9 @@
 """The seed's smoke tests. They prove the extension builds, links and imports."""
 
+import sys
+import sysconfig
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import keleusma
@@ -27,6 +30,19 @@ def test_the_version_is_the_keleusma_release_and_a_binding_revision() -> None:
 def test_cargo_carries_the_first_three_parts_of_the_version() -> None:
     manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
     assert manifest["package"]["version"] == keleusma.KELEUSMA_VERSION
+
+
+def test_the_extension_keeps_a_free_threaded_interpreter_free() -> None:
+    # A free-threaded CPython re-enables the GIL when it imports an extension that
+    # does not declare itself safe without it. PyO3 declares that by default, which
+    # rests on the review in the design's Threading section. Elsewhere this passes
+    # trivially, and the free-threaded CI job is where it bites.
+    if not sysconfig.get_config_var("Py_GIL_DISABLED"):
+        return
+    # Read by name, because the function exists only from 3.13 and pyright checks
+    # against 3.12.
+    is_gil_enabled: Callable[[], bool] = getattr(sys, "_is_gil_enabled")  # noqa: B009
+    assert not is_gil_enabled()
 
 
 def test_the_stated_keleusma_version_matches_the_cargo_pin() -> None:

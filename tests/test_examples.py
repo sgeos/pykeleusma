@@ -80,6 +80,9 @@ def test_one_frame_advances_the_stream_by_one_iteration() -> None:
 
 
 def test_the_frame_loop_runs_headless(monkeypatch: pytest.MonkeyPatch) -> None:
+    # pygame-ce has no free-threaded build, so the free-threaded CI job lacks it. The
+    # other jobs install it, and their counts show the test ran there.
+    pytest.importorskip("pygame")
     monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
     monkeypatch.setenv("SDL_AUDIODRIVER", "dummy")
     assert run(frames=60, fps=0) == 60

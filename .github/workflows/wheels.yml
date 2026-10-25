@@ -1,9 +1,11 @@
 # Release wheels and the source distribution, built and smoke-tested on every pull
 # request, and published to PyPI only from a pushed version tag.
 #
-# The extension uses the stable ABI from Python 3.12, so one wheel per platform
-# serves every later Python. Each wheel is installed into a clean interpreter and
-# runs a script, so a wheel that builds but does not import fails here. The source
+# Wheels cover Linux with glibc and with musl, macOS and Windows, each on x86-64 and
+# ARM64. Per platform, one stable-ABI wheel serves CPython 3.12 and later, and
+# free-threaded CPython 3.14t and 3.15t get a wheel each. Each wheel is installed into
+# a clean interpreter and runs a script, so a wheel that builds but does not import
+# fails here, with the exception of the free-threaded musl wheels. The source
 # distribution is built into a wheel from scratch and runs the same script, so a
 # missing source file fails here too.
 #
@@ -25,66 +27,136 @@ on:
 permissions:
   contents: read
 
+env:
+  # The script every installed distribution runs. It also reports whether the GIL is
+  # on, which a free-threaded interpreter re-enables if the extension does not
+  # declare itself safe without it, so the free-threaded wheels assert it stays off.
+  SMOKE: |
+    import sys, sysconfig, keleusma
+    vm = keleusma.VM(keleusma.compile("fn main(x: Word) -> Word { x * 2 }"))
+    assert vm.call(21) == keleusma.Finished(42), vm
+    free = bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+    assert not (free and sys._is_gil_enabled()), "the GIL was re-enabled"
+    print(keleusma.__version__, keleusma.KELEUSMA_VERSION, sys.version)
+
 concurrency:
   group: wheels-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: build (${{ matrix.os }}, ${{ matrix.target }})
+    name: build (${{ matrix.os }}, ${{ matrix.target }}, ${{ matrix.libc }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # Each job builds three wheels. One uses the stable ABI and serves CPython 3.12
+        # and later with the GIL. The stable ABI does not cover free-threaded CPython,
+        # so 3.14t and 3.15t each get a wheel of their own.
         include:
-          - { os: ubuntu-latest, target: x86_64 }
-          - { os: ubuntu-24.04-arm, target: aarch64 }
-          - { os: macos-latest, target: aarch64 }
-          - { os: macos-15-intel, target: x86_64 }
-          - { os: windows-latest, target: x64 }
+          - { os: ubuntu-latest, target: x86_64, libc: manylinux }
+          - { os: ubuntu-24.04-arm, target: aarch64, libc: manylinux }
+          - { os: ubuntu-latest, target: x86_64, libc: musllinux }
+          - { os: ubuntu-24.04-arm, target: aarch64, libc: musllinux }
+          - { os: macos-latest, target: aarch64, libc: native }
+          - { os: macos-15-intel, target: x86_64, libc: native }
+          - { os: windows-latest, target: x64, libc: native }
+          - { os: windows-11-arm, target: aarch64, libc: native }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      # The free-threaded interpreters come first, so the plain `python` on the PATH
+      # is 3.12. On Linux they serve only the smoke tests, because maturin builds in a
+      # container with interpreters of its own.
+      - id: py314t
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14t"
+      - id: py315t
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15t"
+      - id: py312
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Build the wheel
+      - name: Install the Rust toolchain where the image lacks it
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf -o rustup-init.exe \
+              https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe
+            ./rustup-init.exe -y --profile minimal
+            echo "$USERPROFILE/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Choose the interpreters to build for
+        shell: bash
+        env:
+          PY312: ${{ steps.py312.outputs.python-path }}
+          PY314T: ${{ steps.py314t.outputs.python-path }}
+          PY315T: ${{ steps.py315t.outputs.python-path }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "INTERPRETERS=python3.12 python3.14t python3.15t" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = Windows ]; then
+            echo "INTERPRETERS=$(cygpath -m "$PY312") $(cygpath -m "$PY314T") $(cygpath -m "$PY315T")" >> "$GITHUB_ENV"
+          else
+            echo "INTERPRETERS=$PY312 $PY314T $PY315T" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build the wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
-          args: --release --locked --out dist
-          manylinux: auto
+          args: --release --locked --out dist --interpreter ${{ env.INTERPRETERS }}
+          manylinux: ${{ matrix.libc == 'musllinux' && 'musllinux_1_2' || 'auto' }}
 
-      - name: Install the wheel and run a script
+      - name: Check that three wheels carry the license notices
         shell: bash
         run: |
-          python -m venv smoke
-          if [ -f smoke/Scripts/python.exe ]; then py=smoke/Scripts/python.exe; else py=smoke/bin/python; fi
-          "$py" -m pip install --no-index --find-links dist pykeleusma
-          cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/$py" -c "
-          import keleusma
-          vm = keleusma.VM(keleusma.compile('fn main(x: Word) -> Word { x * 2 }'))
-          assert vm.call(21) == keleusma.Finished(42), vm
-          print(keleusma.__version__, keleusma.KELEUSMA_VERSION)
-          "
-
-      - name: Check that the wheel carries the license notices
-        shell: bash
-        run: |
+          ls dist
+          test "$(ls dist/*.whl | wc -l)" -eq 3
           python - dist/*.whl <<'PY'
           import sys, zipfile
-          names = zipfile.ZipFile(sys.argv[1]).namelist()
-          for wanted in ("LICENSE", "THIRD_PARTY_LICENSES.txt"):
-              assert any(n.endswith("/licenses/" + wanted) for n in names), wanted
+          for wheel in sys.argv[1:]:
+              names = zipfile.ZipFile(wheel).namelist()
+              for wanted in ("LICENSE", "THIRD_PARTY_LICENSES.txt"):
+                  assert any(n.endswith("/licenses/" + wanted) for n in names), (wheel, wanted)
           PY
+
+      - name: Install each wheel and run a script
+        if: matrix.libc != 'musllinux'
+        shell: bash
+        env:
+          PY312: ${{ steps.py312.outputs.python-path }}
+          PY314T: ${{ steps.py314t.outputs.python-path }}
+          PY315T: ${{ steps.py315t.outputs.python-path }}
+        run: |
+          for base in "$PY312" "$PY314T" "$PY315T"; do
+            rm -rf smoke
+            "$base" -m venv smoke
+            if [ -f smoke/Scripts/python.exe ]; then py=smoke/Scripts/python.exe; else py=smoke/bin/python; fi
+            "$py" -m pip install --no-index --find-links dist pykeleusma
+            (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$py" -c "$SMOKE")
+          done
+
+      - name: Install the stable-ABI wheel on Alpine Linux and run a script
+        # The runner uses glibc, so a musl wheel is tested in an Alpine container. No
+        # official free-threaded Alpine image exists, so the free-threaded musl wheels
+        # are built and checked for their notices, but not run.
+        if: matrix.libc == 'musllinux'
+        run: |
+          docker run --rm -e SMOKE -v "$PWD/dist:/dist:ro" python:3.12-alpine sh -c \
+            'pip install --no-index --find-links /dist pykeleusma && cd /tmp && python -c "$SMOKE"'
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.libc }}
           path: dist/*.whl
           if-no-files-found: error
 
@@ -114,12 +186,7 @@ jobs:
           python -m venv smoke
           smoke/bin/python -m pip install dist/*.tar.gz
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/smoke/bin/python" -c "
-          import keleusma
-          vm = keleusma.VM(keleusma.compile('fn main(x: Word) -> Word { x * 2 }'))
-          assert vm.call(21) == keleusma.Finished(42), vm
-          print(keleusma.__version__, keleusma.KELEUSMA_VERSION)
-          "
+          "$GITHUB_WORKSPACE/smoke/bin/python" -c "$SMOKE"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -150,7 +217,8 @@ jobs:
         run: |
           version="${TAG#v}"
           ls dist
-          test "$(ls dist | wc -l)" -eq 6
+          # Eight builds of three wheels each, and the source distribution.
+          test "$(ls dist | wc -l)" -eq 25
           for file in dist/*; do
             case "$(basename "$file")" in
               "pykeleusma-$version-"*.whl | "pykeleusma-$version.tar.gz") ;;

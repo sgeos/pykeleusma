@@ -62,10 +62,14 @@ the VM `failed`, and a native's own exception reaches the caller unchanged.
 pip install pykeleusma
 ```
 
-Wheels are built for Linux on x86-64 and ARM64, macOS on Intel and Apple silicon, and
-Windows on x86-64, for CPython 3.12 and later through the stable application binary
-interface. Elsewhere, pip builds from the source distribution, which needs a Rust
-toolchain of at least 1.88.
+Prebuilt wheels cover Linux with glibc and with musl, such as Alpine, macOS, and
+Windows, each on x86-64 and ARM64. On each, one wheel serves CPython 3.12 and later
+through the stable application binary interface, and free-threaded CPython 3.14t and
+3.15t, which run without the global interpreter lock, get a wheel each. Elsewhere, pip
+builds from the source distribution, which needs a Rust toolchain of at least 1.88.
+
+A VM belongs to the thread that creates it, and a compiled `Module` may be shared
+between threads. That holds with and without the global interpreter lock.
 
 The version is the Keleusma release the binding is built against, followed by a fourth
 part that counts binding releases against it. Version 0.2.2.0 is the first binding

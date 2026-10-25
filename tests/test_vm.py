@@ -22,6 +22,10 @@ from keleusma._keleusma import _live_vm_count
 ANSWER = keleusma.compile("fn main() -> Word { 40 + 2 }")
 
 
+def _double(x: int) -> int:
+    return x * 2
+
+
 def test_a_vm_constructs_and_runs() -> None:
     vm = keleusma.VM(ANSWER)
     assert vm.call() == keleusma.Finished(42)
@@ -240,6 +244,44 @@ def test_a_vm_created_on_a_worker_thread_runs_there() -> None:
         thread.join()
     assert errors == []
     assert results == [keleusma.Finished(42)] * 8
+
+
+def test_many_threads_use_the_shared_state_at_once() -> None:
+    # Under free-threaded Python these threads run truly in parallel, so this covers
+    # the state the extension shares between threads. Compiling, the interned names of
+    # opaque types, the per-thread frames of external natives, natives calling back
+    # into Python, and one module shared by every thread. A barrier makes the threads
+    # overlap. Under the GIL the test still passes, with less overlap.
+    shared = keleusma.compile(
+        "use external host::f(Word) -> Word\n"
+        "loop main(t: Word) -> Word { let n = yield host::f(t) + 1; n }"
+    )
+    workers = 8
+    rounds = 200
+    barrier = threading.Barrier(workers)
+    errors: list[BaseException] = []
+
+    def work(index: int) -> None:
+        try:
+            marker = object()
+            name = f"Opaque{index}"
+            echo = keleusma.compile(f"fn main(s: {name}) -> {name} {{ s }}")
+            native = keleusma.Native(_double, max_invocations=1)
+            stream = keleusma.VM(shared, natives={"host::f": native})
+            barrier.wait()
+            assert stream.call(index) == keleusma.Yielded(index * 2 + 1)
+            for step in range(rounds):
+                assert stream.step(step) == keleusma.Yielded(step * 2 + 1)
+                assert keleusma.VM(echo).call(marker) == keleusma.Finished(marker)
+        except BaseException as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
 
 
 def test_private_data_starts_as_unit_not_zero() -> None:
