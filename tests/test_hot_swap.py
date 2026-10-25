@@ -260,3 +260,54 @@ def test_seeding_needs_declarations() -> None:
     loaded = keleusma.load_module(SEEDED.to_bytes())
     with pytest.raises(TypeError, match="compiled from source"):
         keleusma.VM(SEEDED).replace_module(loaded, private={"q": 1})
+
+
+# Reading private data, which carries scalar state across a swap.
+
+WRITER = keleusma.compile(
+    "private data pv { q: Word, a: [Word; 2], t: (Word, bool) }\n"
+    "loop main(x: Word) -> Word "
+    "{ pv.q = 0 + x; pv.a[0] = x; pv.a[1] = x * 2; pv.t = (x, true); "
+    "let r = yield pv.q; r }"
+)
+READER = keleusma.compile(
+    "private data pv { q: Word, a: [Word; 2], t: (Word, bool) }\n"
+    "loop main(x: Word) -> Word "
+    "{ let old = pv.q + pv.a[1]; pv.q = x; pv.a[0] = x; pv.a[1] = x; "
+    "pv.t = (x, false); let r = yield old; r }"
+)
+
+
+def test_private_data_reads_unwritten_fields_as_none() -> None:
+    assert keleusma.VM(WRITER).private_data == {"q": None, "a": [None, None], "t": None}
+
+
+def test_private_data_reads_what_the_script_wrote_across_a_reset() -> None:
+    vm = keleusma.VM(WRITER)
+    vm.call(4)
+    expected = {"q": 4, "a": [4, 8], "t": (4, True)}
+    assert vm.private_data == expected
+    assert vm.resume(0) == keleusma.Reset()
+    assert vm.private_data == expected
+
+
+def test_scalar_state_carries_across_a_swap() -> None:
+    vm = keleusma.VM(READER)  # The larger footprint of the two.
+    vm.replace_module(WRITER)
+    vm.call(4)
+    vm.resume(0)
+    carried = {k: v for k, v in vm.private_data.items() if k != "t"}
+    vm.replace_module(READER, private=carried)
+    assert vm.call(100) == keleusma.Yielded(4 + 8)
+
+
+def test_none_seeds_a_field_as_unwritten() -> None:
+    vm = keleusma.VM(SEEDED)
+    vm.replace_module(SEEDED, private={"q": None, "a": [None, 2]})
+    assert vm.private_data == {"q": None, "a": [None, 2], "t": None}
+
+
+def test_private_data_needs_declarations() -> None:
+    loaded = keleusma.VM(keleusma.load_module(WRITER.to_bytes()))
+    with pytest.raises(TypeError, match="compiled from source"):
+        _ = loaded.private_data

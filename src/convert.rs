@@ -147,6 +147,15 @@ pub fn to_value(obj: &Bound<'_, PyAny>, ty: &Ty) -> PyResult<Value> {
         ))),
         Ty::OutOnly {
             name,
+            why: OutOnly::TypeGeneric,
+            ..
+        } => Err(PyTypeError::new_err(format!(
+            "`{name}` is an instance of a type-generic struct, which Keleusma 0.2.2 does \
+             not read as its fields when the host builds it; pass the fields and let the \
+             script build the struct"
+        ))),
+        Ty::OutOnly {
+            name,
             why: OutOnly::GenericEnum,
             ..
         } => Err(PyTypeError::new_err(format!(

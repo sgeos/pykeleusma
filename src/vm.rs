@@ -263,6 +263,8 @@ fn private_values(module: &Module, private: Option<&Bound<'_, PyAny>>) -> PyResu
             .ok_or_else(|| VMError::new_err(format!("an undeclared slot `{}`", slot.name)))?;
         let value = match values.get_item(field) {
             Err(_) => Value::Unit,
+            // `None` is a slot not yet written, as `private_data` reports it.
+            Ok(object) if object.is_none() => Value::Unit,
             Ok(object) => match (element, field_ty) {
                 (None, ty) if is_scalar(ty) => to_value(&object, ty)?,
                 (None, ty) => {
@@ -283,7 +285,11 @@ fn private_values(module: &Module, private: Option<&Bound<'_, PyAny>>) -> PyResu
                             items.len()
                         )));
                     }
-                    to_value(&items[i], element_ty)?
+                    if items[i].is_none() {
+                        Value::Unit
+                    } else {
+                        to_value(&items[i], element_ty)?
+                    }
                 }
                 _ => return Err(VMError::new_err(format!("an unexpected slot `{rest}`"))),
             },
@@ -1203,6 +1209,89 @@ impl VM {
     #[getter]
     fn shared_data<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(py, &self.shared)
+    }
+
+    /// The private `data` block's fields as a `dict`, converted by their declared
+    /// types, with `None` for a field, or an array element, not yet written, since a
+    /// Keleusma 0.2.2 private slot starts as `()`.
+    ///
+    /// Passing the result, or part of it, as `replace_module(module, private=...)`
+    /// carries the state of scalar fields across a hot swap. Read between runs.
+    #[getter]
+    fn private_data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let Some(Ok(Ty::Struct {
+            name: block,
+            fields,
+        })) = &self.boundary.private
+        else {
+            return Err(PyTypeError::new_err(
+                "`private_data` needs a module compiled from source that declares a private \
+                 `data` block with fields of supported types",
+            ));
+        };
+        let names: Vec<String> = self
+            .module
+            .data_layout
+            .as_ref()
+            .map(|d| {
+                d.slots
+                    .iter()
+                    .filter(|s| matches!(s.visibility, keleusma::bytecode::SlotVisibility::Private))
+                    .map(|s| s.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let slots = self
+            .vm
+            .private_slots(names.len())
+            .ok_or_else(|| VMError::new_err("the arena does not hold the private slots"))?;
+        let none = |_: usize| None;
+        let ctx = ReadContext {
+            arena: self.vm.arena(),
+            widths: self.boundary.widths,
+            opaque: &none,
+        };
+        let convert = |value: &Value, ty: &Ty| -> PyResult<Bound<'py, PyAny>> {
+            match value {
+                Value::Unit if *ty != Ty::Unit => Ok(py.None().into_bound(py)),
+                _ => to_py(py, value, ty, &ctx),
+            }
+        };
+        let result = PyDict::new(py);
+        for (field, ty) in fields {
+            let prefix = format!("{block}.{field}");
+            let first = names.iter().position(|n| *n == format!("{prefix}[0]"));
+            let value = match ty {
+                // KELEUSMA-0.2.2: a whole-array assignment stores the array in the
+                // first element's slot and leaves the others `()`. That array is read
+                // whole, and an epoch check refuses it if a `Reset` reclaimed it.
+                Ty::Array(..) if first.is_some_and(|i| matches!(slots[i], Value::Array(_))) => {
+                    let index = first.unwrap_or_default();
+                    to_py(py, &slots[index], ty, &ctx)?
+                }
+                Ty::Array(element, count) => {
+                    let mut items = Vec::with_capacity(*count);
+                    for index in 0..*count {
+                        let slot = format!("{prefix}[{index}]");
+                        let position = names
+                            .iter()
+                            .position(|n| *n == slot)
+                            .ok_or_else(|| VMError::new_err(format!("no private slot `{slot}`")))?;
+                        items.push(convert(&slots[position], element)?);
+                    }
+                    pyo3::types::PyList::new(py, items)?.into_any()
+                }
+                _ => {
+                    let position = names
+                        .iter()
+                        .position(|n| *n == prefix)
+                        .ok_or_else(|| VMError::new_err(format!("no private slot `{prefix}`")))?;
+                    convert(&slots[position], ty)?
+                }
+            };
+            result.set_item(field, value)?;
+        }
+        Ok(result.into_any())
     }
 
     /// The shared `data` block's fields as a `dict`, converted by their declared

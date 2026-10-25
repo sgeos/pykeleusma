@@ -124,6 +124,25 @@ fn private_data_starts_as_unit() {
 }
 
 #[test]
+fn a_whole_array_store_to_private_data_fills_only_the_first_slot() {
+    // Migration item 19. Element-wise stores work, and a later read of the second
+    // element after a whole-array store gives `()`.
+    let source = "private data pv { a: [Word; 2] }\n\
+                  fn main(x: Word) -> Word { pv.a = [x, x * 2]; pv.a[1] }";
+    let private = module(source);
+    let mut arena = Arena::with_capacity(1 << 20);
+    arena
+        .resize_persistent(keleusma::vm::required_persistent_capacity_for(&private))
+        .expect("persistent");
+    let mut vm = Vm::new(private, &arena).expect("vm");
+    let result = vm.call(&[Value::Int(3)]).map(|s| format!("{s:?}"));
+    assert!(
+        matches!(&result, Ok(s) if s.contains("Unit")),
+        "{SEE}, item 19: {result:?}"
+    );
+}
+
+#[test]
 fn a_const_generic_enum_records_only_the_generic_layout() {
     // Migration item 9. The binding refuses host-built const-generic enum values,
     // because their padding is not recorded.

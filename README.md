@@ -148,7 +148,8 @@ the host who produced the bytes. It protects only as far as the holders of the t
 keys are trusted. `to_signed_bytes(seed, recipient_key=...)` also encrypts the module, and
 `load_module` then needs the matching `decryption_key`. A swap happens only at an
 iteration boundary, keeps shared data and starts private data afresh, unless
-`private={"field": value}` seeds the new module's scalar private fields. The VM is
+`private={"field": value}` seeds the new module's scalar private fields, and
+`vm.private_data` reads the running module's private fields, so state can be carried. The VM is
 built from the module with the larger footprint, because its arena does not grow.
 
 ```python

@@ -568,9 +568,16 @@ from Python lives in a `bytes` object the binding cannot zero.
 layout, and Keleusma refuses a swap that changes it. Private data starts as `()`, the
 state a fresh 0.2.2 VM starts in, unless `private` maps field names to values, which
 Keleusma takes from the host at the swap. Only scalar fields and arrays of scalars can
-be seeded, because Keleusma clears the composite body pool after writing the slots, and
-Keleusma has no accessor to read the old module's private values, so the host carries
-state forward only as far as it knows it. A native the new module adds must be
+be seeded, because Keleusma clears the composite body pool after writing the slots.
+`vm.private_data` reads the running module's private fields, with `None` for one not yet
+written, and passing its scalar fields as `private` carries them across a swap. Keleusma
+has no accessor, so the binding reads the slots where Keleusma's own documentation of
+`Vm::private_slot_count` places them, as consecutive values at the start of the
+persistent region, between runs and read only. A Rust test pins that layout and runs
+under Miri. **Fact.** A whole-array assignment to a private array stores the array in
+the first element's slot and leaves the others `()`, so a later read of `pv.a[1]` gives
+`()`, while element-wise stores work. `private_data` reads such an array whole, and
+refuses it cleanly once a `Reset` has reclaimed it. Reported to `v0.2.3`. A native the new module adds must be
 registered before the next call. Every native the host serves gets a fresh closure
 with the new module's declaration, because a closure converts by the declaration of
 the module it was built for, and a stale one built values of the old type until
@@ -622,18 +629,20 @@ changing a byte. Keleusma's own per-slot accessors handle only scalars, so the b
 reads with its flat decoder and writes with a flat encoder that passes only scalars to
 `write_scalar_le`, which panics on anything else.
 
-**Generic types.** A const-generic struct converts as its instance, whose name
+**Generic types.** A type-generic struct leaves the script as its substituted fields,
+which probes confirmed for `Box<Word>` and `Pair<Word, Text>`, but cannot come in,
+because the VM treats a host-built instance's generic field as opaque. A const-generic struct converts as its instance, whose name
 monomorphization builds as `Buf__c3` for `Buf<3>`, which the binding reproduces so a
 host-built value is recognised. A const-generic enum leaves the script but cannot come
 in, because Keleusma 0.2.2 records only the generic definition's layout, without the
-instance's padding, which a probe showed. A type-generic instance is refused, because
-Keleusma 0.2.2 does not lay it out as its substituted fields. A probe found an `Opaque`
-field in `Box<Word>` and a short body for `Pair<Word, Text>`, and a generic enum
-failed to type-check after monomorphization.
+instance's padding, which a probe showed. A probe also found Keleusma mixing a flat `E__c2` and a
+boxed `E` in one array, and rejecting another program after monomorphization, so
+const-generic enum inputs stay refused. A type-generic enum such as `Maybe<Word>` failed
+to type-check after monomorphization in Keleusma itself, and is refused.
 
-**Not supported.** Type-generic structs and enums, nested
-options, refined newtypes and const-generic enums as inputs, composite private fields
-when seeding a swap, and reading the old module's private values.
+**Not supported.** Type-generic enums, nested options, refined newtypes, type-generic
+structs and const-generic enums as inputs, and composite private fields when seeding a
+swap.
 
 ## Threading
 

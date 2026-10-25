@@ -97,7 +97,14 @@ confirmed against the published release.
 17. **External natives.** Fact. `register_external_native` keeps its function-pointer
     signature on the branch. `compat::native_ctx` builds the context the trampolines
     pass, and gains `addr_bytes`, and `rodata` with PR 517.
-18. **Unchanged paths the binding relies on.** Fact. `Vm::decode` and
+18. **Type-generic structs.** Re-check whether a host-built instance is read as its
+    fields, and if so remove `OutOnly::TypeGeneric`.
+19. **Private array stores.** Not surveyed. The canary
+    `a_whole_array_store_to_private_data_fills_only_the_first_slot` pins the 0.2.2
+    defect, and `VM.private_data` reads the misplaced array. If the canary fails, remove
+    that special case. The private slot layout `OwnedVm::private_slots` reads is pinned
+    by `private_slots_read_back_what_the_script_wrote`.
+20. **Unchanged paths the binding relies on.** Fact. `Vm::decode` and
     `Value::OpaqueRef`, which `compat::resolve_opaque` uses, the cost model API, the
     `wire_format` functions and the Cargo features are unchanged.
 
@@ -105,7 +112,7 @@ confirmed against the published release.
 
 - An accessor for the bytecode image, for item 3.
 - An accessor for the opaque registry, replacing `compat::resolve_opaque`.
-- An accessor for private slot values, so a hot swap can carry them forward.
+- An accessor for private slot values, replacing `OwnedVm::private_slots`.
 - A closure-based `register_external_native` with a native context, which would
   retire the trampoline pool in `src/external.rs`.
 - A host-side halting `VmError` variant, replacing the `InvalidBytecode` carrier in

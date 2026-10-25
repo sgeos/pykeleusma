@@ -262,7 +262,7 @@ def test_the_wrong_number_of_arguments_raises_type_error() -> None:
 def test_an_unsupported_parameter_type_names_the_type() -> None:
     source = "struct P<T> { x: T }\nfn main(p: P<Word>) -> Word { p.x }"
     vm = keleusma.VM(keleusma.compile(source))
-    with pytest.raises(TypeError, match="generic type `P`"):
+    with pytest.raises(TypeError, match="`P` is an instance of a type-generic struct"):
         vm.call(1)
 
 

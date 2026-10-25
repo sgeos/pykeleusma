@@ -20,14 +20,17 @@ items remained. This task closed those the binding itself could close.
   resolves task 8's two-resumes deviation.
 - **Arena use.** `vm.arena_peak_bytes` makes the empirical margin observable. The
   crate's scripts peak at most at 23 percent of their arena.
+- **Private data.** `vm.private_data` reads the private fields where Keleusma's own
+  documentation places them, so scalar state carries across a swap. This found a
+  Keleusma defect: a whole-array store to a private array fills only the first slot.
+- **Type-generic structs** leave the script as their fields.
 
 **Still open, and why.**
-- **Blocked on Keleusma.** Private value access, composite private seeding,
-  type-generic and const-generic enum inputs, and `rodata` all need Keleusma APIs, and
-  have been requested.
+- **Blocked on Keleusma.** Composite private seeding, type-generic and const-generic
+  enum inputs, and `rodata`, requested from `v0.2.3`.
 - **The arena margin** stays measured, not proven, until Keleusma's sizing is fixed.
 - **Publishing** to PyPI needs the operator's confirmation.
 
-**Verification.** 394 Python tests and 47 Rust tests pass locally, with pyright, ruff,
+**Verification.** 400 Python tests and 49 Rust tests pass locally, with pyright, ruff,
 rustfmt and clippy clean. Mutations of the guard's two new rules and of the
 trampoline frame stack were each caught.

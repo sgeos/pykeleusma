@@ -80,6 +80,11 @@ pub enum OutOnly {
     /// one, but the rule is script code the binding cannot run.
     Refinement,
     /// KELEUSMA-0.2.2: re-check on an upgrade.
+    /// An instance of a type-generic struct, which the VM does not read as its
+    /// substituted fields when the host builds it, though it lays out one the script
+    /// builds that way.
+    TypeGeneric,
+    /// KELEUSMA-0.2.2: re-check on an upgrade.
     /// An instance of a const-generic enum. Keleusma 0.2.2 records the layout of the
     /// generic definition only, without the instance's padding, so a value the host
     /// builds is packed with the wrong size. A value the script builds reads back.
@@ -300,15 +305,33 @@ impl Resolver {
             return Ok(Ty::Opaque(name.to_string()));
         };
         // KELEUSMA-0.2.2: re-check on an upgrade.
-        // Keleusma 0.2.2 does not lay out a type-generic instance as its substituted
-        // fields. A probe found an `Opaque` field in `Box<Word>`, a 16-byte body where
-        // `Pair<Word, Text>` substituted needs 24, and a generic enum that fails to
-        // type-check after monomorphization. Const generics lay out as substituted.
+        // A value of a type-generic struct that the script builds is laid out as its
+        // substituted fields, which a probe confirmed for `Box<Word>` and
+        // `Pair<Word, Text>`, so it may leave the script. One the host builds is not
+        // read that way inside the VM, where a probe found the field of `Box<Word>`
+        // treated as an opaque value, so it cannot come in. A type-generic enum such as
+        // `Maybe<Word>` failed to type-check after monomorphization in Keleusma itself.
         if !args.is_empty() {
-            return Err(Unsupported(format!(
-                "the generic type `{name}` with type arguments, whose layout Keleusma \
-                 0.2.2 does not give as its substituted fields"
-            )));
+            let TypeDef::Struct(s) = def else {
+                return Err(Unsupported(format!(
+                    "the generic enum `{name}` with type arguments, which Keleusma 0.2.2 \
+                     does not compile reliably"
+                )));
+            };
+            let env = Env::bind(name, &s.type_params, &s.const_params, args, consts)?;
+            let fields = s
+                .fields
+                .iter()
+                .map(|f| Ok((f.name.clone(), self.resolve_at(&f.type_expr, &env, depth)?)))
+                .collect::<Result<Vec<_>, Unsupported>>()?;
+            return Ok(Ty::OutOnly {
+                name: name.to_string(),
+                inner: Box::new(Ty::Struct {
+                    name: name.to_string(),
+                    fields,
+                }),
+                why: OutOnly::TypeGeneric,
+            });
         }
         let instance = instance_name(name, consts);
         match def {
@@ -698,9 +721,13 @@ mod tests {
     }
 
     #[test]
-    fn a_named_type_is_unsupported_but_does_not_fail_the_signature() {
+    fn a_type_generic_struct_resolves_as_output_only() {
         let s = signature("struct P<T> { x: T }\nfn main(p: P<Word>, n: Word) -> Word { n }");
-        assert!(matches!(&s.params[0], Err(Unsupported(m)) if m.contains("`P`")));
+        assert!(matches!(
+            &s.params[0],
+            Ok(Ty::OutOnly { why: OutOnly::TypeGeneric, inner, .. })
+                if matches!(inner.as_ref(), Ty::Struct { fields, .. } if fields[0].1 == Ty::Word)
+        ));
         assert_eq!(s.params[1], Ok(Ty::Word));
         assert_eq!(s.ret, Ok(Ty::Word));
     }
