@@ -26,4 +26,10 @@ summarised here. Inside the writable `~/.cargo`, deny writes to `bin`, `env`,
 Remove the shared sccache cache from the writable list. Deny writes to `interline.py`
 and `PROTOCOL.md` in the interline store. Optionally give uv a separate agent cache.
 
+**Follow-up, the same day.** After the operator's settings refresh, every denial was
+probed and refused, the writable paths stayed writable, uv on the `PATH` is 0.13.5,
+`SCCACHE_DIR` resolves to the absolute agent cache, and the full development loop,
+including the mailbox, passed inside the sandbox. `v0.2.3` sent an interim reply,
+recorded in the handoff.
+
 **Next.** Task 2, `keleusma.compile` with located exceptions.

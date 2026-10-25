@@ -35,23 +35,29 @@ the `v0.2.3` reply.
 - **Defect in task 1.** The arena from `auto_arena_capacity_for` fails after the first
   `Reset` and on a composite argument. Roadmap task 3 now owns the fix.
 - **With `v0.2.3`.** Request `pykeleusma-20261025-dynamic-host-findings`, covering arena
-  margins, a yield type-check gap and how a dynamic host decodes flat composites.
-- **With the operator.** The uv copy on the `PATH`, the absolute `SCCACHE_DIR`, and the
-  sandbox write scopes, all described in the last report.
+  margins, a yield type-check gap and how a dynamic host decodes flat composites. The
+  interim reply `v023-20261025-dynamic-host-interim` says nothing is checked against
+  0.2.3 yet, that the arena and type findings would be defects if they reproduce, and
+  that a host margin is a workaround, not a supported bound.
 
 ## Environment
 
 Checked on 2026-10-25 inside the sandbox.
 
 - **uv.** Version 0.9.5 panics inside the macOS sandbox while reading the system proxy
-  configuration. Version 0.13.5 works. The copy on the `PATH` is still 0.9.5, because
-  `python3` now installs into a different user directory.
+  configuration. The copy on the `PATH` is 0.13.5 since 2026-10-25 and works.
 - **sccache.** The client cannot spawn its server inside the sandbox, but a server run
   in the foreground inside the sandbox, `SCCACHE_NO_DAEMON=1 SCCACHE_START_SERVER=1
   sccache`, serves sandboxed builds and caches them. A server started outside the
   sandbox would compile outside it, so it must not be used from a sandboxed session.
   Agent sessions use their own port and cache through `SCCACHE_SERVER_PORT` and
-  `SCCACHE_DIR` in the user settings. sccache does not expand `~` in `SCCACHE_DIR`.
+  `SCCACHE_DIR` in the user settings, given as an absolute path because sccache does
+  not expand `~`. Start the server at the beginning of a session with
+  `SCCACHE_NO_DAEMON=1 SCCACHE_START_SERVER=1 sccache` as a background task.
+- **Write scopes.** Inside the writable `~/.cargo`, the user settings deny writes to
+  `bin`, `env`, `config.toml`, `config` and `credentials.toml`, and reads of
+  `credentials.toml`. The interline script and protocol are write-protected. Each
+  denial was probed on 2026-10-25.
 - **Interline store.** Reading and writing work in the sandbox since 2026-10-25.
 - **Git.** `git fetch` and `git push` are excluded from the sandbox at user level. The
   exclusion matches only a bare command.
