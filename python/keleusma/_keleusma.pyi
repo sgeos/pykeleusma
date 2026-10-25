@@ -10,6 +10,7 @@ __version__: str
 KELEUSMA_VERSION: str
 BYTECODE_VERSION: int
 DEFAULT_ARGUMENT_BYTES: int
+OP_NAMES: tuple[str, ...]
 
 @final
 class Module:
@@ -65,6 +66,9 @@ class VM:
     def argument_bytes(self) -> int: ...
     @property
     def wcet_per_iteration(self) -> int | None: ...
+    def wcet_per_iteration_with(
+        self, op_cycles: Mapping[str, int], *, text_byte_cycles: int | None = None
+    ) -> int | None: ...
     @property
     def failed(self) -> bool: ...
     def register(

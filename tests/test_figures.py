@@ -6,6 +6,8 @@ compare figures between scripts rather than pinning constants, because the absol
 numbers belong to Keleusma's cost model and layout, which may change between releases.
 """
 
+import pytest
+
 import keleusma
 
 STREAM = "loop main(e: Word) -> Word {{ let n = yield {expression}; n }}"
@@ -71,3 +73,49 @@ def test_the_argument_budget_adds_to_the_arena_exactly() -> None:
     without = keleusma.VM(module, argument_bytes=0)
     with_budget = keleusma.VM(module, argument_bytes=512)
     assert with_budget.arena_capacity - without.arena_capacity == 512
+
+
+# Cost models of the host's, applied by opcode name.
+
+STEP = keleusma.compile(
+    "use host::f(Word) -> Word\n"
+    "loop main(x: Word) -> Word { let y = x + x * 3; let r = yield host::f(y); r }"
+)
+
+
+def _identity(x: int) -> int:
+    return x
+
+
+def _step_vm(wcet: int = 50) -> keleusma.VM:
+    return keleusma.VM(STEP, natives={"host::f": keleusma.Native(_identity, wcet=wcet)})
+
+
+def test_an_empty_table_gives_the_nominal_figure() -> None:
+    vm = _step_vm()
+    assert vm.wcet_per_iteration_with({}) == vm.wcet_per_iteration
+
+
+def test_free_opcodes_leave_only_the_declared_native_bound() -> None:
+    zero = dict.fromkeys(keleusma.OP_NAMES, 0)
+    for wcet in (0, 50, 1_000):
+        assert _step_vm(wcet).wcet_per_iteration_with(zero, text_byte_cycles=0) == wcet
+
+
+def test_a_cost_grows_the_figure_once_per_execution() -> None:
+    # The script runs one checked add per iteration, so raising its cost by `k` raises
+    # the figure by exactly `k`. Both sides are measured, not pinned.
+    vm = _step_vm()
+    base = vm.wcet_per_iteration_with({"CheckedAdd": 10})
+    assert base is not None
+    assert vm.wcet_per_iteration_with({"CheckedAdd": 17}) == base + 7
+
+
+def test_an_unknown_opcode_is_refused() -> None:
+    with pytest.raises(ValueError, match="not a Keleusma opcode"):
+        _step_vm().wcet_per_iteration_with({"Nope": 1})
+
+
+def test_a_module_without_a_stream_has_no_figure() -> None:
+    vm = keleusma.VM(keleusma.compile("fn main() -> Word { 1 }"))
+    assert vm.wcet_per_iteration_with({"CheckedAdd": 5}) is None
