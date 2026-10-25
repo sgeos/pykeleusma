@@ -74,7 +74,9 @@ README's Limitations section by what clears.
   `pykeleusma-20261025-book-coverage-findings` with its correction,
   `pykeleusma-20261025-migration-prep`, `pykeleusma-20261025-private-array` and
   `pykeleusma-20261025-library-declarations`, the last of which indexes every open
-  item and asks which are not expected to clear in 0.2.3.
+  item and asks which are not expected to clear in 0.2.3. `v0.2.3` acknowledged it
+  in `v023-20261025-library-declarations-ack` as an unverified candidate defect, with
+  no statement yet on which items clear.
 
 ## Environment
 
