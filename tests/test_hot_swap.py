@@ -169,18 +169,24 @@ def test_a_vm_built_from_signed_code_trusts_its_keys() -> None:
     assert vm.call(4) == keleusma.Yielded(4)
 
 
-def test_an_encrypted_module_cannot_be_swapped_in() -> None:
+def test_an_encrypted_module_swaps_in_when_its_signer_is_trusted() -> None:
+    # The signature covers the encrypted bytes, which the module keeps, so the VM's
+    # trust matrix checks it at the swap without the decryption key.
     decryption_key = bytes(range(32, 64))
-    data = keleusma.compile("signed fn main(t: Word) -> Word { t }").to_signed_bytes(
+    data = keleusma.compile(
+        "signed loop main(t: Word) -> Word { let n = yield t + 1; n }"
+    ).to_signed_bytes(
         SEED, recipient_key=keleusma.encryption_public_key(decryption_key)
     )
     module = keleusma.load_module(
         data, verifying_keys=[PUBLIC], decryption_key=decryption_key
     )
     vm = keleusma.VM(TIMES_TEN)
-    vm.register_verifying_key(PUBLIC)
-    with pytest.raises(keleusma.VerifyError, match="encrypted module"):
+    with pytest.raises(keleusma.LoadError, match="did not verify"):
         vm.replace_module(module)
+    vm.register_verifying_key(PUBLIC)
+    vm.replace_module(module)
+    assert vm.call(1) == keleusma.Yielded(2)
 
 
 def test_a_malformed_verifying_key_is_refused() -> None:

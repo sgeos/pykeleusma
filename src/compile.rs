@@ -58,12 +58,15 @@ pub struct Module {
 /// How a signed module was verified, and the keys it was verified against.
 #[derive(Debug, Clone)]
 pub struct SignedImage {
-    /// The signed bytes, which Keleusma's signed loader verifies again when a VM is
-    /// built. `None` for a module that was encrypted. Its signature covers the
-    /// encrypted form, which Keleusma verifies while decrypting, so the decrypted
-    /// module carries no signature of its own to verify again, exactly as in
-    /// Keleusma's own encrypted loader.
-    pub bytes: Option<Vec<u8>>,
+    /// The bytes as they were loaded, whose signature a VM's trust matrix verifies
+    /// again at a hot swap. For an encrypted module these are the encrypted bytes,
+    /// because the signature covers the encrypted form, and Keleusma verifies that
+    /// form without the decryption key.
+    pub bytes: Vec<u8>,
+    /// Whether `bytes` are encrypted. The decoded module then came from decrypting
+    /// them, which authenticated the ciphertext, and carries its signature flag
+    /// cleared, as in Keleusma's own encrypted loader.
+    pub encrypted: bool,
     pub keys: Vec<ed25519_dalek::VerifyingKey>,
 }
 
@@ -348,7 +351,12 @@ pub fn load_module(
         // Verifies the signature over the encrypted form, then decrypts.
         let plain = wire_format::decrypt_encrypted_signed_to_signed_bytes(data, &keys, private)
             .map_err(|e| VerifyError::new_err(format!("{e:?}")))?;
-        (plain, Some(SignedImage { bytes: None, keys }))
+        let image = SignedImage {
+            bytes: data.to_vec(),
+            encrypted: true,
+            keys,
+        };
+        (plain, Some(image))
     } else if decryption_key.is_some() {
         // A host that passes a decryption key expects a confidential module, so a
         // plaintext one is refused rather than accepted silently.
@@ -364,7 +372,8 @@ pub fn load_module(
         wire_format::verify_module_signature(data, &keys)
             .map_err(|e| VerifyError::new_err(format!("{e:?}")))?;
         let image = SignedImage {
-            bytes: Some(data.to_vec()),
+            bytes: data.to_vec(),
+            encrypted: false,
             keys,
         };
         (data.to_vec(), Some(image))
@@ -379,7 +388,13 @@ pub fn load_module(
         KeleusmaModule::from_bytes(&bytes).map_err(|e| LoadError::new_err(format!("{e:?}")))?;
     // A decrypted module was verified during decryption, so it is built like an
     // unsigned one, as Keleusma's own encrypted loader does.
-    if matches!(&signed, Some(SignedImage { bytes: None, .. })) {
+    if matches!(
+        &signed,
+        Some(SignedImage {
+            encrypted: true,
+            ..
+        })
+    ) {
         inner.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
     }
     let boundary = Boundary {

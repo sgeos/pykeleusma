@@ -38,7 +38,7 @@ use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple};
 
-use crate::types::{OPTION_NONE, OPTION_SOME, Ty, Variant};
+use crate::types::{OPTION_NONE, OPTION_SOME, OutOnly, Ty, Variant};
 use crate::vm::VMError;
 
 /// The module's scalar widths in bytes, which flat bodies are packed with.
@@ -141,10 +141,23 @@ pub fn to_value(obj: &Bound<'_, PyAny>, ty: &Ty) -> PyResult<Value> {
             Ok(Value::array(elements(items.into_iter(), &types)?))
         }
         Ty::Struct { name, fields } => struct_value(obj, ty, name, fields),
-        Ty::Refined { name, .. } => Err(PyTypeError::new_err(format!(
+        Ty::OutOnly {
+            name,
+            why: OutOnly::Refinement,
+            ..
+        } => Err(PyTypeError::new_err(format!(
             "`{name}` is a refined newtype, whose rule is script code the host cannot run, \
              so the host cannot supply one; pass the underlying value and let the script \
              build it"
+        ))),
+        Ty::OutOnly {
+            name,
+            why: OutOnly::GenericEnum,
+            ..
+        } => Err(PyTypeError::new_err(format!(
+            "`{name}` is an instance of a const-generic enum, which Keleusma 0.2.2 cannot \
+             receive from the host because it records only the generic definition's \
+             layout; pass the payload and let the script build the variant"
         ))),
         Ty::Enum { name, variants } => enum_value(obj, ty, name, variants),
         Ty::Option(inner) => {
@@ -337,7 +350,7 @@ pub fn to_py<'py>(
                 .collect::<PyResult<Vec<_>>>()?;
             make_variant(py, &variant.name, values)
         }
-        (Ty::Refined { inner, .. }, value) => to_py(py, value, inner, ctx),
+        (Ty::OutOnly { inner, .. }, value) => to_py(py, value, inner, ctx),
         (Ty::Option(_), Value::None) => Ok(py.None().into_bound(py)),
         (Ty::Option(inner), Value::Enum(EnumBody::Boxed(boxed))) if boxed.type_name == "Option" => {
             match (boxed.variant.as_str(), boxed.fields.as_slice()) {
@@ -419,7 +432,7 @@ fn read_flat<'py>(
             )?;
             Ok(PyList::new(py, items)?.into_any())
         }
-        Ty::Refined { inner, .. } => read_flat(py, bytes, inner, ctx, epoch),
+        Ty::OutOnly { inner, .. } => read_flat(py, bytes, inner, ctx, epoch),
         Ty::Struct {
             fields: declared, ..
         } => {

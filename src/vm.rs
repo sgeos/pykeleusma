@@ -314,12 +314,17 @@ impl VM {
             // loader, which verifies the signature again and keeps the keys as the
             // VM's trust matrix.
             Some(SignedImage {
-                bytes: Some(bytes),
+                bytes,
+                encrypted: false,
                 keys,
             }) => OwnedVm::new_signed(module.inner(), bytes, keys, argument_bytes, &native_wcmu),
             // A decrypted module was verified while decrypting. It is built normally
             // and its keys become the trust matrix, as in Keleusma's encrypted loader.
-            Some(SignedImage { bytes: None, keys }) => {
+            Some(SignedImage {
+                encrypted: true,
+                keys,
+                ..
+            }) => {
                 OwnedVm::new(module.inner().clone(), argument_bytes, &native_wcmu).map(|mut vm| {
                     for key in keys {
                         vm.register_verifying_key(*key);
@@ -491,20 +496,12 @@ impl VM {
         };
         match module.signed() {
             // Signed bytes are verified against this VM's trust matrix, the keys it
-            // was built with and those added by `register_verifying_key`.
-            Some(SignedImage {
-                bytes: Some(bytes), ..
-            }) => self
-                .vm
-                .replace_module_signed(module.inner(), bytes, &native_wcmu),
-            // A decrypted module has no signed bytes left to check against this VM's
-            // trust matrix, so swapping it in would bypass that matrix.
-            Some(SignedImage { bytes: None, .. }) => {
-                return Err(VerifyError::new_err(
-                    "an encrypted module cannot be hot-swapped, because its signature \
-                     covers the encrypted form and cannot be checked against this VM's \
-                     trust matrix after decryption; build a new VM from it instead",
-                ));
+            // was built with and those added by `register_verifying_key`. For an
+            // encrypted module the signature covers the encrypted bytes, which were
+            // kept for this check, so no decryption key is needed again.
+            Some(SignedImage { bytes, .. }) => {
+                self.vm
+                    .replace_module_signed(module.inner(), bytes, &native_wcmu)
             }
             None => self.vm.replace_module(module.inner().clone(), &native_wcmu),
         }

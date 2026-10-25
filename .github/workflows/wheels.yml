@@ -1,0 +1,92 @@
+# Release wheels, built and smoke-tested but never published.
+#
+# The extension uses the stable ABI from Python 3.12, so one wheel per platform
+# serves every later Python. Each wheel is installed into a clean interpreter and
+# runs a script, so a wheel that builds but does not import fails here. Publishing
+# to PyPI needs the operator's confirmation in session, so this workflow has no
+# token, no publishing step and only read permission. Actions are pinned to full
+# commit hashes, with the release tag in a comment, as in ci.yml.
+
+name: Wheels
+
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.os }}, ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64 }
+          - { os: macos-latest, target: aarch64 }
+          - { os: macos-15-intel, target: x86_64 }
+          - { os: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --locked --out dist
+          manylinux: auto
+
+      - name: Install the wheel and run a script
+        shell: bash
+        run: |
+          python -m venv smoke
+          if [ -f smoke/Scripts/python.exe ]; then py=smoke/Scripts/python.exe; else py=smoke/bin/python; fi
+          "$py" -m pip install --no-index --find-links dist pykeleusma
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/$py" -c "
+          import keleusma
+          vm = keleusma.VM(keleusma.compile('fn main(x: Word) -> Word { x * 2 }'))
+          assert vm.call(21) == keleusma.Finished(42), vm
+          print(keleusma.__version__, keleusma.KELEUSMA_VERSION)
+          "
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the source distribution
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: sdist
+          args: --out dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
