@@ -1,0 +1,22 @@
+# Proposes updates to the pinned actions. Each proposal is a pull request that CI checks
+# and the operator reviews. The cooldown keeps a release out until it has had a week to
+# be noticed if it is bad. Grouping puts every action update of one week into a single
+# pull request, which keeps review and CI load to one run a week. A change to wheels.yml
+# runs the full wheel matrix, as that workflow's plan job describes.
+#
+# The Cargo and uv dependencies are left out by decision. Keleusma is pinned exactly,
+# and moving to a later release changes the bytecode version, so it moves only as
+# docs/architecture/MIGRATION_V0_2_3.md plans. The development tools in pyproject.toml
+# are pinned exactly so that every run uses the same versions, and are updated by hand.
+# Dependabot alerts remain enabled for both ecosystems in the repository settings.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

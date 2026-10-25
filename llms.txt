@@ -1,0 +1,24 @@
+# pykeleusma
+
+> pykeleusma is the Python binding for Keleusma, a total functional stream processor
+> whose scripts have statically bounded worst-case execution time and memory use. The
+> distribution is `pykeleusma` and the import package is `keleusma`. The bounds cover
+> the script and the bounds declared for each native, and never Python code registered
+> as a native.
+
+This file follows the llms.txt convention. It is an index for language models and agents
+that read the repository from outside, such as a model asked to write code against it.
+Links are absolute, so the file works when fetched on its own.
+
+## Start Here
+
+- [README](https://github.com/sgeos/pykeleusma/blob/main/README.md): overview, installation, examples, limitations and the guarantee boundary.
+- [Type stub](https://github.com/sgeos/pykeleusma/blob/main/python/keleusma/_keleusma.pyi): the complete public interface with types.
+- [AGENTS.md](https://github.com/sgeos/pykeleusma/blob/main/AGENTS.md): onboarding for any AI assistant working in the repository.
+- [CLAUDE.md](https://github.com/sgeos/pykeleusma/blob/main/CLAUDE.md): authoritative project context, conventions and per-session protocol.
+
+## Documentation
+
+- [Documentation index](https://github.com/sgeos/pykeleusma/blob/main/docs/README.md): architecture, decisions, roadmap and process.
+- [Binding design](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/BINDING_DESIGN.md): how the binding maps Keleusma onto Python, and the known issues in dependencies.
+- [Keleusma](https://github.com/sgeos/keleusma): the language, its compiler and its virtual machine.

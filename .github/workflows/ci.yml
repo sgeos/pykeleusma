@@ -3,8 +3,11 @@
 # Every job checks the same things the project's CLAUDE.md lists as the local
 # gate, so a green run here means what a green run on a developer machine means.
 # Actions are pinned to full commit hashes, with the release tag in a comment,
-# so that a moved or compromised tag cannot change what runs. The workflow only
-# reads the repository and holds no secrets.
+# so that a moved or compromised tag cannot change what runs, and Dependabot proposes
+# newer pins after a cooldown. The workflow only reads the repository and holds no
+# secrets. The repository job runs the hygiene half of scripts/check.sh and lints the
+# workflows themselves, as in sgeos/project-template. Each job has a timeout of a few
+# times its usual run, so a hung job releases its runner.
 #
 # GitHub-hosted runners share one concurrent-job limit across the account, so a pull
 # request runs a reduced set. Linux with 3.12 and 3.15, Windows with 3.12, free-threaded
@@ -34,11 +37,15 @@ on:
       - SECURITY.md
   workflow_dispatch:
 
-permissions:
-  contents: read
+# No permissions by default. Each job grants only what it needs.
+permissions: {}
 
+# Supersede an in-flight run when a pull request is pushed again, and leave branch runs
+# alone. The group is the ref for a pull request and the unique run identifier
+# otherwise, so that a second merge to main cannot cancel the first merge's run and
+# leave a commit on main with no result of its own.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -47,9 +54,40 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  repository:
+    # Lints the workflows with actionlint, which checks syntax, expressions and the
+    # shell in run steps, and zizmor, which checks for known weaknesses such as
+    # injection through untrusted input, excessive permissions and unpinned actions.
+    # Neither is commonly installed on a developer machine, so they run here only. The
+    # actionlint image is pinned by digest, and zizmor's version is pinned explicitly.
+    name: repository hygiene and workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Repository hygiene
+        run: ./scripts/check.sh --hygiene-only
+      - name: actionlint
+        run: >-
+          docker run --rm --volume "$PWD:/repo" --workdir /repo
+          rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+          -color
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          version: 1.31.1
+          advanced-security: false
+
   test:
     name: test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       # So that one push cannot hold every runner the account shares.
@@ -84,7 +122,9 @@ jobs:
 
       - name: Build the extension and install the tools
         shell: bash
-        run: uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+        run: uv sync --locked --python "$PYTHON_PATH"
 
       - name: Python tests
         run: uv run --no-sync pytest
@@ -124,6 +164,9 @@ jobs:
     # here, and the job installs only what the other tests need.
     name: test (ubuntu-latest, Python 3.14t)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -151,6 +194,9 @@ jobs:
     name: test (FreeBSD 15.1, source distribution)
     if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -179,6 +225,9 @@ jobs:
   miri:
     name: miri (Tree Borrows)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

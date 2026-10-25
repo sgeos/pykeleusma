@@ -33,6 +33,12 @@ completed, moved or abandoned.
   protected `pypi` environment exists, with the operator as required reviewer and
   `v*` tags only. The
   README carries badges, and `.github` holds issue and pull request templates.
+  Since 2026-10-25 pull requests merge only by merge commit, and the labels `breaking`
+  and `ignore-for-release` exist for `.github/release.yml`.
+- **Template sync** with `sgeos/project-template` at `227f261`, on 2026-10-25.
+  `scripts/check.sh` is the local gate, its hygiene section the template's unchanged.
+  Deliberately different are the reduced pull request set, the absent trailer, and
+  `.claude/` ignored whole. A local `secret/disclosure-terms.txt` feeds the gate.
 - **Tasks 1 to 15 done.** Task 15 made the README list the limitations before the
   guarantees, separating those expected to clear with Keleusma 0.2.3. Task 13 resolved the known issues and debt, and prepared for
   Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
@@ -91,8 +97,7 @@ Checked on 2026-10-25 inside the sandbox.
   sccache`, serves sandboxed builds and caches them. A server started outside the
   sandbox would compile outside it, so it must not be used from a sandboxed session.
   Agent sessions use their own port and cache through `SCCACHE_SERVER_PORT` and
-  `SCCACHE_DIR` in the user settings, given as an absolute path because sccache does
-  not expand `~`. Start the server at the beginning of a session with
+  `SCCACHE_DIR` in the user settings. Start the server at the beginning of a session with
   `SCCACHE_NO_DAEMON=1 SCCACHE_START_SERVER=1 sccache` as a background task.
 - **Write scopes.** Inside the writable `~/.cargo`, the user settings deny writes to
   `bin`, `env`, `config.toml`, `config` and `credentials.toml`, and reads of
@@ -107,8 +112,7 @@ Checked on 2026-10-25 inside the sandbox.
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # 411 tests pass
-cargo test                  # 49 Rust tests pass
+./scripts/check.sh          # every check passes, with 411 Python and 49 Rust tests
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

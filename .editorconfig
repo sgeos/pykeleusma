@@ -1,3 +1,5 @@
+# Settings every language shares, from sgeos/project-template, with four-space
+# indentation as the default for Python and Rust.
 root = true
 
 [*]
@@ -11,5 +13,15 @@ indent_size = 4
 [*.{json,jsonl,toml,yaml,yml}]
 indent_size = 2
 
+[{*.sh,scripts/hooks/*}]
+indent_style = space
+indent_size = 4
+
 [*.md]
 trim_trailing_whitespace = false
+
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[Makefile]
+indent_style = tab
