@@ -54,6 +54,15 @@ pub enum Ty {
     },
     /// `Option<T>`, which Keleusma lays out as an enum of `None` and `Some(T)`.
     Option(Box<Ty>),
+    /// `Multiword<N, F>`, `words` signed 64-bit words, least significant first, holding
+    /// a two's complement value scaled by `2**frac_bits`. Laid out as `[Word; N]`.
+    Multiword {
+        words: usize,
+        frac_bits: u32,
+    },
+    /// A type the program names but does not define, which Keleusma's type checker
+    /// treats as an opaque host type. Any Python object converts to one.
+    Opaque(String),
     /// A type laid out as `inner` that may leave the script but that the host cannot
     /// build, for the reason given.
     OutOnly {
@@ -97,6 +106,11 @@ impl Ty {
             Ty::Fixed(_) => LayoutDescriptor::Scalar(ScalarKind::Fixed),
             Ty::Float => LayoutDescriptor::Scalar(ScalarKind::Float),
             Ty::Text => LayoutDescriptor::Scalar(ScalarKind::Text),
+            Ty::Opaque(_) => LayoutDescriptor::Scalar(ScalarKind::Opaque),
+            Ty::Multiword { words, .. } => LayoutDescriptor::Array {
+                element: Box::new(LayoutDescriptor::Scalar(ScalarKind::Int)),
+                count: *words,
+            },
             Ty::Tuple(elements) => {
                 LayoutDescriptor::Tuple(elements.iter().map(Ty::layout).collect())
             }
@@ -139,6 +153,8 @@ impl Ty {
             Ty::Fixed(n) => format!("Fixed<{n}>"),
             Ty::Float => "Float".to_string(),
             Ty::Text => "Text".to_string(),
+            Ty::Opaque(name) => name.clone(),
+            Ty::Multiword { words, frac_bits } => format!("Multiword<{words}, {frac_bits}>"),
             Ty::Tuple(elements) => {
                 let names: Vec<String> = elements.iter().map(Ty::name).collect();
                 format!("({})", names.join(", "))
@@ -155,6 +171,9 @@ impl Ty {
 /// The deepest chain of named types the resolver follows. Keleusma rejects a type that
 /// contains itself, so this bound only stops a malformed program from looping.
 const MAX_DEPTH: usize = 32;
+
+/// The largest word count Keleusma's layout pass accepts for `Multiword<N, F>`.
+const MAX_MULTIWORD_WORDS: usize = 65_535;
 
 /// Resolves type expressions against one program's struct, enum and newtype
 /// definitions.
@@ -245,7 +264,21 @@ impl Resolver {
                     .collect::<Result<Vec<_>, _>>()?;
                 self.named(name, &args, &consts, next)
             }
-            TypeExpr::Multiword(_, _, _) => Err(Unsupported("a multiword integer".to_string())),
+            TypeExpr::Multiword(words, frac_bits, _) => {
+                let n = env.eval(words)?;
+                let f = env.eval(frac_bits)?;
+                // Keleusma's own bound on the word count, and a scale that leaves at
+                // least the sign within the words.
+                let words = usize::try_from(n)
+                    .ok()
+                    .filter(|w| (1..=MAX_MULTIWORD_WORDS).contains(w))
+                    .ok_or_else(|| Unsupported(format!("a multiword of {n} words")))?;
+                let frac_bits = u32::try_from(f)
+                    .ok()
+                    .filter(|b| (*b as usize) < words * 64)
+                    .ok_or_else(|| Unsupported(format!("a multiword scale of {f} bits")))?;
+                Ok(Ty::Multiword { words, frac_bits })
+            }
             #[allow(unreachable_patterns)]
             _ => Err(Unsupported("this type form".to_string())),
         }
@@ -254,10 +287,16 @@ impl Resolver {
     /// Resolve the definition `name`, instantiated with the given type and const
     /// arguments, as monomorphization instantiates it.
     fn named(&self, name: &str, args: &[Ty], consts: &[i64], depth: usize) -> Declared {
-        let def = self
-            .defs
-            .get(name)
-            .ok_or_else(|| Unsupported(format!("the unknown type `{name}`")))?;
+        // A name the program does not define is an opaque host type, as Keleusma's
+        // type checker treats it.
+        let Some(def) = self.defs.get(name) else {
+            if !args.is_empty() || !consts.is_empty() {
+                return Err(Unsupported(format!(
+                    "the opaque type `{name}` given generic arguments"
+                )));
+            }
+            return Ok(Ty::Opaque(name.to_string()));
+        };
         // Keleusma 0.2.2 does not lay out a type-generic instance as its substituted
         // fields. A probe found an `Opaque` field in `Box<Word>`, a 16-byte body where
         // `Pair<Word, Text>` substituted needs 24, and a generic enum that fails to

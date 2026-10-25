@@ -28,9 +28,12 @@
 //! A value is converted immediately after the call that produced it, because a flat
 //! body is valid only until the next call or resume on the same VM.
 
+use std::sync::Arc;
+
 use keleusma::Arena;
 use keleusma::bytecode::{ArrayBody, EnumBody, StructBody, TupleBody, Value};
 use keleusma::flat_value::FlatComposite;
+use keleusma::opaque::HostOpaque;
 use keleusma::value_layout::LayoutDescriptor;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
@@ -123,6 +126,16 @@ pub fn to_value(obj: &Bound<'_, PyAny>, ty: &Ty) -> PyResult<Value> {
             Ok(Value::array(elements(items.into_iter(), &types)?))
         }
         Ty::Struct { name, fields } => struct_value(obj, ty, name, fields),
+        Ty::Opaque(name) => Ok(crate::opaque::to_value(obj, name)),
+        Ty::Multiword { words, frac_bits } => {
+            let words: Vec<i64> = obj
+                .py()
+                .import("keleusma._multiword")?
+                .getattr("to_words")?
+                .call1((obj, *words, *frac_bits))?
+                .extract()?;
+            Ok(Value::array(words.into_iter().map(Value::Int).collect()))
+        }
         Ty::OutOnly {
             name,
             why: OutOnly::Refinement,
@@ -242,6 +255,9 @@ fn enum_value(
 pub struct ReadContext<'a> {
     pub arena: &'a Arena,
     pub widths: Widths,
+    /// Resolves an index into the VM's registry of opaque values, which a flat
+    /// composite's opaque field holds. `None` for an index the registry lacks.
+    pub opaque: &'a dyn Fn(usize) -> Option<Arc<dyn HostOpaque>>,
 }
 
 fn mismatch(ty: &Ty, found: &str) -> PyErr {
@@ -277,6 +293,11 @@ pub fn to_py<'py>(
         (Ty::Float, Value::Float(f)) => f.into_bound_py_any(py),
         (Ty::Text, Value::StaticStr(s)) => s.into_bound_py_any(py),
         (Ty::Text, Value::KStr(k)) => k.get(ctx.arena).map_err(|_| stale())?.into_bound_py_any(py),
+        (Ty::Opaque(_), Value::Opaque(value)) => crate::opaque::to_py(py, value),
+        (Ty::Multiword { words, frac_bits }, value) => {
+            let list = to_py(py, value, &multiword_words(*words), ctx)?;
+            from_words(py, &list, *frac_bits)
+        }
         (Ty::Tuple(types), Value::Tuple(TupleBody::Boxed(items))) => {
             if items.len() != types.len() {
                 return Err(mismatch(ty, &format!("a tuple of length {}", items.len())));
@@ -383,6 +404,31 @@ fn read_flat<'py>(
         ));
     }
     match ty {
+        Ty::Multiword { words, frac_bits } => {
+            let list = read_flat(py, bytes, &multiword_words(*words), ctx, epoch)?;
+            from_words(py, &list, *frac_bits)
+        }
+        Ty::Opaque(name) => {
+            let index = Value::read_scalar_le(
+                bytes,
+                0,
+                keleusma::value_layout::ScalarKind::Int,
+                word_bytes,
+                float_bytes,
+            )
+            .ok()
+            .and_then(|v| match v {
+                Value::Int(i) => usize::try_from(i).ok(),
+                _ => None,
+            });
+            let value = index.and_then(|i| (ctx.opaque)(i)).ok_or_else(|| {
+                VMError::new_err(format!(
+                    "an opaque `{name}` field of a flat composite does not resolve, which a \
+                     well-formed value never produces"
+                ))
+            })?;
+            crate::opaque::to_py(py, &value)
+        }
         Ty::Text => {
             let text = crate::compat::read_flat_text(bytes, ctx.widths, ctx.arena, epoch)
                 .map_err(|e| VMError::new_err(format!("{e:?}")))?;
@@ -493,6 +539,22 @@ fn payload<'py>(
         .collect()
 }
 
+/// The `[Word; N]` a multiword is laid out as, which its words are read as.
+fn multiword_words(words: usize) -> Ty {
+    Ty::Array(Box::new(Ty::Word), words)
+}
+
+/// The Python number a multiword's words represent, by `keleusma._multiword`.
+fn from_words<'py>(
+    py: Python<'py>,
+    words: &Bound<'py, PyAny>,
+    frac_bits: u32,
+) -> PyResult<Bound<'py, PyAny>> {
+    py.import("keleusma._multiword")?
+        .getattr("from_words")?
+        .call1((words, frac_bits))
+}
+
 fn make_variant<'py>(
     py: Python<'py>,
     name: &str,
@@ -546,6 +608,8 @@ pub fn to_py_untyped<'py>(
         Value::Float(f) => f.into_bound_py_any(py),
         Value::StaticStr(s) => s.into_bound_py_any(py),
         Value::KStr(k) => k.get(ctx.arena).map_err(|_| stale())?.into_bound_py_any(py),
+        // An opaque value carries its own type name, so it needs no declaration.
+        Value::Opaque(value) => crate::opaque::to_py(py, value),
         other => Err(PyTypeError::new_err(format!(
             "{} needs a declared type to convert, which {UNTYPED_HINT}",
             kind_name(other)

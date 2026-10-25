@@ -57,6 +57,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use keleusma::Arena;
 use keleusma::bytecode::{LoadError, Module, Value};
+use keleusma::opaque::HostOpaque;
 use keleusma::verify::module_runtime_footprint;
 use keleusma::vm::{
     Vm, VmError, VmState, auto_arena_capacity_for, required_persistent_capacity_for,
@@ -383,6 +384,15 @@ impl OwnedVm {
         let mut module = module.clone();
         module.flags &= !wire_format::FLAG_REQUIRES_SIGNATURE;
         self.install(module, native_wcmu)
+    }
+
+    /// The opaque value at `index` in the VM's registry, which a flat composite's
+    /// opaque field names. Keleusma keeps the registry private and resolves an index
+    /// only through `Vm::decode`, so the index is decoded as a value.
+    pub fn resolve_opaque(&self, index: usize) -> Option<std::sync::Arc<dyn HostOpaque>> {
+        crate::compat::resolve_opaque(index, |value| {
+            self.cell.with_dependent(|_arena, vm| vm.decode(value).ok())
+        })
     }
 
     /// Add a key to the trust matrix that signed hot swaps verify against.

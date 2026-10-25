@@ -9,6 +9,7 @@
 
 use keleusma::Arena;
 use keleusma::marshall::{KeleusmaType, RefContext};
+use keleusma::opaque::HostOpaque;
 use keleusma::value_layout::LayoutDescriptor;
 use keleusma::vm::{NativeCtx, VmError};
 
@@ -57,6 +58,20 @@ impl Widths {
     pub fn offset_of(&self, layout: &LayoutDescriptor, index: usize) -> Option<usize> {
         layout.field_offset(index, self.word_bytes, self.float_bytes)
     }
+}
+
+/// Resolve an opaque registry index through `decode`, Keleusma's only public path to
+/// the registry.
+///
+/// KELEUSMA-0.2.2: the index is wrapped in `Value::OpaqueRef`, a variant Keleusma
+/// marks as hidden internal form, because no accessor exists. The 0.2.3 branch keeps
+/// both the variant and `decode` unchanged. A Keleusma accessor would replace this.
+pub fn resolve_opaque(
+    index: usize,
+    decode: impl FnOnce(&keleusma::bytecode::Value) -> Option<std::sync::Arc<dyn HostOpaque>>,
+) -> Option<std::sync::Arc<dyn HostOpaque>> {
+    let index = u32::try_from(index).ok()?;
+    decode(&keleusma::bytecode::Value::OpaqueRef(index))
 }
 
 /// Read the text a flat `Text` field's two words name, under the epoch of the body

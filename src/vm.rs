@@ -908,9 +908,11 @@ impl VM {
                 ));
             }
         };
+        let resolve = |i: usize| self.vm.resolve_opaque(i);
         let ctx = ReadContext {
             arena: self.vm.arena(),
             widths: self.boundary.widths,
+            opaque: &resolve,
         };
         let converted = match &self.boundary.signature {
             Some(signature) => to_py(py, &value, declared(&signature.ret, "the result")?, &ctx)?,

@@ -136,12 +136,16 @@ def _peak_rss() -> int:
                 ("PeakPagefileUsage", ctypes.c_size_t),
             ]
 
+        # Without declared types ctypes passes the process pseudo-handle as a 32-bit
+        # int, which the 64-bit call rejects.
+        current = ctypes.windll.kernel32.GetCurrentProcess
+        current.restype = wintypes.HANDLE
+        info = ctypes.windll.psapi.GetProcessMemoryInfo
+        info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        info.restype = wintypes.BOOL
         counters = Counters()
         counters.cb = ctypes.sizeof(Counters)
-        process = ctypes.windll.kernel32.GetCurrentProcess()
-        ok = ctypes.windll.psapi.GetProcessMemoryInfo(
-            process, ctypes.byref(counters), counters.cb
-        )
+        ok = info(current(), ctypes.byref(counters), counters.cb)
         assert ok, "GetProcessMemoryInfo failed"
         return int(counters.PeakWorkingSetSize)
     import resource

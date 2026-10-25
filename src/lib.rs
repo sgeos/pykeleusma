@@ -12,6 +12,7 @@ mod convert;
 mod crypto;
 mod libraries;
 mod natives;
+mod opaque;
 mod owned_vm;
 mod types;
 mod vm;

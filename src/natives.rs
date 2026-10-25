@@ -157,9 +157,11 @@ fn invoke(
         .get(name)
         .and_then(|slot| slot.callable.as_ref().map(|c| c.clone_ref(py)))
         .ok_or_else(|| crate::vm::VMError::new_err(format!("native `{name}` is not registered")))?;
+    let resolve = |i: usize| ctx.opaques.get(i).cloned();
     let read = ReadContext {
         arena: ctx.arena,
         widths: Widths::of_native(ctx),
+        opaque: &resolve,
     };
     let signature = decl.and_then(|d| d.signature.as_ref());
     let converted = match signature {

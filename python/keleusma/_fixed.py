@@ -27,6 +27,36 @@ RAW_MIN = -(2**63)
 RAW_MAX = 2**63 - 1
 
 
+def scaled_exactly(value: object, frac_bits: int) -> int:
+    """`value * 2**frac_bits` as an `int`, or raise if it is not exactly one.
+
+    Accepts `int`, `float`, `Fraction`, `Decimal` and any other `numbers.Rational`.
+    Raises `TypeError` for a `bool` or another type, and `ValueError` for a value with
+    no exact representation, so nothing is rounded. Shared by `Fixed` and the
+    multiword conversion.
+    """
+    if isinstance(value, bool):
+        raise TypeError("a bool is not a fixed-point value")
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{value!r} has no fixed-point representation")
+        exact = Fraction(value)
+    elif isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError(f"{value!r} has no fixed-point representation")
+        exact = Fraction(value)
+    elif isinstance(value, int | Rational):
+        exact = Fraction(value)
+    else:
+        raise TypeError(f"cannot convert {type(value).__name__} to a fixed-point value")
+    scaled = exact * (1 << frac_bits)
+    if scaled.denominator != 1:
+        raise ValueError(
+            f"{value!r} is not exactly representable with {frac_bits} fraction bits"
+        )
+    return scaled.numerator
+
+
 def _check_frac_bits(frac_bits: object) -> int:
     if not isinstance(frac_bits, int) or isinstance(frac_bits, bool):
         raise TypeError(f"frac_bits must be an int, not {type(frac_bits).__name__}")
@@ -77,28 +107,7 @@ class Fixed(Fraction):
         rounding would break the round trip the binding guarantees.
         """
         bits = _check_frac_bits(frac_bits)
-        if isinstance(value, bool):
-            raise TypeError("a bool is not a fixed-point value")
-        if isinstance(value, float):
-            if not math.isfinite(value):
-                raise ValueError(f"{value!r} has no fixed-point representation")
-            exact = Fraction(value)
-        elif isinstance(value, Decimal):
-            if not value.is_finite():
-                raise ValueError(f"{value!r} has no fixed-point representation")
-            exact = Fraction(value)
-        elif isinstance(value, int | Rational):
-            exact = Fraction(value)
-        else:
-            raise TypeError(
-                f"cannot convert {type(value).__name__} to a fixed-point value"
-            )
-        scaled = exact * (1 << bits)
-        if scaled.denominator != 1:
-            raise ValueError(
-                f"{value!r} is not exactly representable with {bits} fraction bits"
-            )
-        return cls(scaled.numerator, bits)
+        return cls(scaled_exactly(value, bits), bits)
 
     @property
     def raw(self) -> int:
