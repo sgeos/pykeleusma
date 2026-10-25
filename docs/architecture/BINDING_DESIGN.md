@@ -181,9 +181,12 @@ of scope for 0.1.0.
 default Stacked Borrows model reported undefined behaviour inside rkyv 0.8.18,
 `ArchivedStringRepr::check_bytes`, reached from `Vm::new` while validating the archived
 module. The report is in Keleusma's dependency, not in this binding, and the same tests
-pass under Tree Borrows. Stacked Borrows is experimental, so this is a hypothesis of a
-defect, not a confirmed one. It was reported to the `v0.2.3` line. Until it is resolved,
-this repository runs Miri with `MIRIFLAGS=-Zmiri-tree-borrows`.
+pass under Tree Borrows. It was reported to the `v0.2.3` line, which replied that it is
+known. Keleusma's own continuous integration and release gate run Miri under Tree
+Borrows for the same reason. The line infers, without having tested it, that 0.2.3 no
+longer has this path, because wire format 2 replaced the rkyv auxiliary body. This
+repository therefore runs Miri with `MIRIFLAGS=-Zmiri-tree-borrows` for as long as it
+depends on 0.2.2.
 
 ## Later
 

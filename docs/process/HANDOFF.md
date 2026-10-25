@@ -31,18 +31,29 @@ with `keleusma.VM` and removes the probe.
 
 ## Open
 
-- **With `v0.2.3`.** Notice `pykeleusma-20261024-miri-stacked-borrows`, an rkyv report
-  under Miri's Stacked Borrows model. No reply is expected.
 - **For task 4.** Whether a 0.2.2 module keeps enough type information to find the
   fraction bits of a `Fixed` result.
-- **With the operator.** Sandbox allowances for development, proposed in the last report
-  and not yet applied.
+- **With the operator.** Three user-level environment changes proposed in the last
+  report, which are upgrading uv, bypassing sccache in agent sessions and allowing
+  writes to the interline store.
 
 ## Environment
 
-In a sandboxed agent session, `uv` and `cargo` write outside the repository, to their
-caches and registry, the interline store lies outside it, and `git push` over SSH needs
-`~/.ssh`. Those commands ran outside the sandbox on 2026-10-24.
+Checked on 2026-10-24 inside the sandbox, after the operator added user-level sandbox
+allowances.
+
+- **uv.** Version 0.9.5 panics inside the macOS sandbox while reading the system proxy
+  configuration, a defect fixed upstream. Version 0.13.5 works, and no version between
+  them was tested.
+- **sccache.** The user-level Cargo configuration sets `rustc-wrapper = "sccache"`, and
+  the sccache server cannot start inside the sandbox. A server started outside it would
+  compile, and so run procedural macros and build scripts, outside the sandbox, which
+  defeats it. With `RUSTC_WRAPPER=` set empty, every check here passes in the sandbox,
+  including Miri.
+- **Interline store.** Reading works in the sandbox. Writing, including `ack`, does not
+  until its directory is allowed.
+- **Git.** `git fetch` and `git push` are excluded from the sandbox at user level. The
+  exclusion matches only a bare command, so run them unwrapped, not inside `cd ... &&`.
 
 ## Validity
 

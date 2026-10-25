@@ -4,40 +4,28 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-24, the operator's answers on task 1
+## 2026-10-24, the sandbox check
 
-**Done.** The design document now records three settled points. `keleusma.Fixed`
-converts with `float(value)`, the Python idiom that `Fraction` and `Decimal` follow,
-instead of a `to_float()` method. Native bounds use Keleusma's existing mechanism.
-Natives and bounds are declared when the VM is built, the arena is sized with
-`auto_arena_capacity_for`, and `verify_resources` re-checks any later change. The
-threading model is one VM per dedicated thread, as the operator confirmed, and a new test
-creates and runs VMs on four worker threads at once. `feat/owned-vm` was pushed and
-merged into `main` through a pull request.
+**Result.** With the operator's user-level allowances, the whole development loop runs
+inside the sandbox once two local tools are dealt with. With uv 0.13.5 and sccache
+bypassed, `uv sync`, 12 Python tests, 3 Rust tests, `ruff`, `pyright`, `cargo fmt`,
+`cargo clippy` and Miri under Tree Borrows all passed in the sandbox. Bare `git fetch`
+works through the operator's exclusion. Reading the interline store works and writing
+does not.
 
-**Facts behind the native-bounds design.** The cookbook recipe "Auto-sizing the arena
-from the module", read from the `v0.2.2` tag, passes per-native memory bounds to
-`auto_arena_capacity_for` in `native_names` order. `examples/wcmu_attestation.rs` calls
-`verify_resources` after `set_native_bounds`. Nothing inside `vm.rs` calls
-`verify_resources`, so `call` and `resume` never re-check by themselves, and the
-binding must.
+**Proposed user-level changes, not applied.**
+1. Upgrade uv. The installed 0.9.5 panics in the sandbox, and 0.13.5 does not.
+2. Set `RUSTC_WRAPPER` to an empty value for agent sessions, through the `env` key of the
+   user settings, so that sandboxed builds skip sccache. Terminal builds keep it.
+3. Add the interline store's directory to the user-level `sandbox.filesystem.allowWrite`.
 
-**Verification.** `uv run pytest` passed 12 tests and `cargo test` passed 3. `ruff`,
-`pyright` in strict mode, `cargo fmt --check` and `cargo clippy -D warnings` were clean.
-Only macOS with Python 3.12.12 was checked.
+**Security note.** A trace of sccache printed the process environment, including API
+keys exported by the operator's shell, into the session transcript. The keys are not in
+any tracked file. Rotating them is advisable. Every sandboxed command inherits those
+variables, which is worth reviewing separately.
 
-**Sandbox proposal, not applied.** The key names come from the Claude Code settings
-reference. The hostnames are inferred and should be confirmed against the sandbox's
-denial messages.
-
-- Project `.claude/settings.json` could allow writes to `~/.cache/uv` and `~/.cargo`,
-  and the domains `index.crates.io`, `static.crates.io`, `crates.io`, `pypi.org`,
-  `files.pythonhosted.org` and `github.com`, through `sandbox.filesystem.allowWrite`
-  and `sandbox.network.allowedDomains`.
-- The interline store is outside this repository. An allowance for its directory, not
-  only its database file, belongs in user settings or an ignored local settings file.
-- The documentation states that SSH `git push` fails inside the macOS sandbox even for an
-  allowed host. The options are an HTTPS remote with a token, or a narrow
-  `sandbox.excludedCommands` entry such as `git push *` in user settings.
+**Mailbox.** `v0.2.3` replied that the Miri report is known, and that Keleusma runs Miri
+under Tree Borrows for the same reason. The design document records the reply, and the
+message is acknowledged.
 
 **Next.** Task 2, `keleusma.compile` with located exceptions.
