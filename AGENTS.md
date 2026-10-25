@@ -27,3 +27,5 @@ making any non-trivial change.
   crates.io. Do not edit the Keleusma repository.
 - **Commit once per prompt,** and attribute the assistant that actually contributed.
 - **Ask before outward-facing actions,** such as creating a remote, pushing, or publishing.
+- **Scratch directories.** Use `tmp/` for transient files. Its contents are ignored. Never
+  commit anything under `secret/`.

@@ -9,32 +9,52 @@ completed, moved or abandoned.
 
 ## State on 2026-10-24
 
-- **Cut and published.** The Keleusma project's kaizen line created this repository at
-  the operator's request. At the operator's instruction it created the public GitHub
-  repository `sgeos/pykeleusma`, licensed 0BSD, and pushed `main`. No continuous
-  integration is configured yet.
-- **Builds.** `uv sync` builds the extension with maturin against `keleusma = "=0.2.2"` and
-  PyO3 0.30.1. Three smoke tests pass, and ruff, pyright in strict mode, `cargo fmt` and
-  `cargo clippy -D warnings` are clean. The extension exposes version information only.
-- **Nothing implemented.** No script can run yet.
+- **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD, carries
+  `main` up to `eb7e3e9`. No continuous integration is configured yet.
+- **Task 1 done, on branch `feat/owned-vm`, not merged or pushed.** `OwnedVm` in
+  `src/owned_vm.rs` owns the arena and the VM together with `self_cell`. It is tested in
+  Rust, under Miri with Tree Borrows, and from Python through the temporary private class
+  `_OwnedVmProbe`, including a peak-memory test with a control. Merging into `main` waits
+  for the operator, because a remote exists and the workflow merges through a pull
+  request, which needs a push.
+- **Housekeeping on the same branch.** Ignored `tmp/` and `secret/` directories as in
+  Keleusma, `.claude/` ignored, and uv `cache-keys` so that `uv sync` rebuilds after a
+  Rust edit. Before that fix, `uv sync` silently kept a stale extension.
+- **Operator decisions recorded.** `Fixed` converts to an exact Python value with
+  metadata, planned as `keleusma.Fixed`, and 0.1.0 exposes native bounds. Both are in
+  the design document with their open risks.
 
 ## Next step
 
-Task 1 of [`../roadmap/V0_1_0.md`](../roadmap/V0_1_0.md), owning the arena and the VM
-together with `self_cell`. It is the main design risk, and every later task depends on it.
-The reasoning is in [`../architecture/BINDING_DESIGN.md`](../architecture/BINDING_DESIGN.md).
+Task 2 of [`../roadmap/V0_1_0.md`](../roadmap/V0_1_0.md), `keleusma.compile` with
+exception classes that carry the line and column. Task 3 then replaces `_OwnedVmProbe`
+with `keleusma.VM` and removes the probe.
 
-## Open with the operator
+## Open
 
-- Whether `Fixed` values convert to a dedicated class or to `float`.
-- Whether 0.1.0 exposes `Vm::set_native_bounds` for Python natives.
+- **With the operator.** Whether to push `feat/owned-vm` and merge it through a pull
+  request. Whether the `PanicException` that PyO3 raises for cross-thread use is
+  acceptable, as recorded under Threading in the design document.
+- **With `v0.2.3`.** Notice `pykeleusma-20261024-miri-stacked-borrows`, an rkyv report
+  under Miri's Stacked Borrows model. No reply is expected.
+- **For task 4.** Whether a 0.2.2 module keeps enough type information to find the
+  fraction bits of a `Fixed` result.
+- **For task 7.** Whether the arena covers memory bounds declared for natives after
+  construction.
+
+## Environment
+
+In a sandboxed agent session, `uv` and `cargo` need to write outside the repository, to
+their caches and registry, and the interline store is read-only from inside the
+sandbox. Those commands ran outside the sandbox on 2026-10-24.
 
 ## Validity
 
 ```sh
 git status --short          # clean
 git log --oneline -5        # the newest commit should describe this state
-uv sync && uv run pytest    # the seed's tests pass
+uv sync && uv run pytest    # 11 tests pass
+cargo test                  # 3 Rust tests pass
 ```
 
 Report any check not run, and any commit after the one that last rewrote this file.

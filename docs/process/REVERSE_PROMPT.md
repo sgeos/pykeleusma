@@ -4,15 +4,30 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-24, the seed
+## 2026-10-24, scratch directories, housekeeping and task 1
 
-**Verification.** `uv sync` built the extension. `uv run pytest` passed three tests.
-`ruff check`, `ruff format --check`, `pyright` in strict mode, `cargo fmt --check` and
-`cargo clippy --all-targets -- -D warnings` were clean. The built module reported
-Keleusma 0.2.2 and bytecode version 1. Only macOS with Python 3.12.12 was checked, and no
-continuous integration exists yet. The repository is public at
-https://github.com/sgeos/pykeleusma.
+**Done.** Ignored `tmp/` and `secret/` directories following Keleusma, with
+`tmp/.gitkeep` tracked. Housekeeping fixed a stale-build defect in `uv sync`, ignored
+`.claude/`, and brought the status text up to date. Task 1 is done. `OwnedVm` owns the
+arena and the VM with `self_cell`, and both operator decisions are recorded in the design
+document. Everything is on the branch `feat/owned-vm`, which is not merged or pushed.
 
-**Questions.** The three items under "Open with the operator" in `HANDOFF.md`.
+**Verification.** `uv run pytest` passed 11 tests and `cargo test` passed 3. `ruff
+check`, `ruff format --check`, `pyright` in strict mode, `cargo fmt --check` and `cargo
+clippy --all-targets -- -D warnings` were clean. The Rust tests passed under Miri with
+Tree Borrows. Under the default Stacked Borrows model, Miri reported undefined behaviour
+inside rkyv 0.8.18 during `Vm::new`, which was reported to `v0.2.3`. The memory test was
+run five times without a failure. A deliberate leak of one VM per construction made it
+fail, so it can detect the defect it guards against. Only macOS with Python 3.12.12 was
+checked.
 
-**Next.** Task 1 of the 0.1.0 milestone, owning the arena and the VM together.
+**Not verified.** That the memory test is stable on Linux, where peak memory is reported
+in different units and the allocator differs. The ratio comparison is meant to be
+independent of both, but it has not run there.
+
+**Questions.**
+1. May `feat/owned-vm` be pushed and merged into `main` through a pull request?
+2. Is PyO3's `PanicException` for cross-thread use acceptable? The alternative was
+   rejected as unsound, as the design document explains.
+
+**Next.** Task 2, `keleusma.compile` with located exceptions.

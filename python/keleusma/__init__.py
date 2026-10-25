@@ -1,7 +1,7 @@
 """Run Keleusma scripts from Python.
 
-The seed exposes version information only. The planned interface is in
-docs/architecture/BINDING_DESIGN.md.
+The public interface exposes version information only so far. The planned interface
+is in docs/architecture/BINDING_DESIGN.md.
 """
 
 from keleusma._keleusma import BYTECODE_VERSION, KELEUSMA_VERSION, __version__
