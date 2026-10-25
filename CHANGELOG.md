@@ -7,6 +7,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Python natives through `VM(module, natives=...)`, `vm.register`,
+  `vm.set_native_bounds` and `vm.native_bounds`, with `keleusma.Native` for declared
+  bounds. Memory bounds size the arena or are refused, a native's exception reaches the
+  caller unchanged, and cycles through natives are collected.
+
 - `vm.stream(*args, inputs=None)`, a generator yielding `Yielded` and `Reset` states and
   returning the `Finished` value, with resume inputs from an iterable or from `send`.
 

@@ -14,7 +14,9 @@
 //! compiler uses through its type checker, so field offsets match the compiled code
 //! by construction rather than by a copy of its rules.
 
-use keleusma::ast::{ConstExpr, FunctionCategory, PrimType, Program, TypeExpr};
+use std::collections::BTreeMap;
+
+use keleusma::ast::{ConstExpr, FunctionCategory, ImportItem, PrimType, Program, TypeExpr};
 use keleusma::value_layout::{LayoutDescriptor, ScalarKind};
 
 /// A type the binding converts.
@@ -210,6 +212,51 @@ impl EntrySignature {
     }
 }
 
+/// What a `use` line declares about one native.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDecl {
+    /// The parameter and return types from `use host::name(T1, T2) -> R`, or `None`
+    /// for a bare `use host::name`, whose values convert only as scalars.
+    pub signature: Option<(Vec<Declared>, Declared)>,
+    /// Whether the line is `use external ...`, which 0.1.0 does not support.
+    pub external: bool,
+}
+
+/// The natives the program declares by name, keyed by the full name Keleusma uses,
+/// such as `host::double`. A wildcard import names no native, so its natives are
+/// absent here and convert as untyped.
+pub fn native_decls(program: &Program, default_frac_bits: u8) -> BTreeMap<String, NativeDecl> {
+    program
+        .uses
+        .iter()
+        .filter_map(|decl| {
+            let ImportItem::Name(name) = &decl.import else {
+                return None;
+            };
+            let mut full = decl.path.join("::");
+            if !full.is_empty() {
+                full.push_str("::");
+            }
+            full.push_str(name);
+            let signature = decl.signature.as_ref().map(|sig| {
+                let params = sig
+                    .params
+                    .iter()
+                    .map(|p| resolve(p, default_frac_bits))
+                    .collect();
+                (params, resolve(&sig.return_type, default_frac_bits))
+            });
+            Some((
+                full,
+                NativeDecl {
+                    signature,
+                    external: decl.is_external,
+                },
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use keleusma::lexer::tokenize;
@@ -266,6 +313,25 @@ mod tests {
         assert!(matches!(&s.params[0], Err(Unsupported(m)) if m.contains("`P`")));
         assert_eq!(s.params[1], Ok(Ty::Word));
         assert_eq!(s.ret, Ok(Ty::Word));
+    }
+
+    #[test]
+    fn native_declarations_resolve() {
+        let program = parse(
+            &tokenize(
+                "use host::double(Word) -> Word\nuse host::raw\nuse external io::send\n\
+                 fn main() -> Word { host::double(1) }",
+            )
+            .expect("lex"),
+        )
+        .expect("parse");
+        let decls = native_decls(&program, DEFAULT);
+        assert_eq!(
+            decls["host::double"].signature,
+            Some((vec![Ok(Ty::Word)], Ok(Ty::Word)))
+        );
+        assert_eq!(decls["host::raw"].signature, None);
+        assert!(decls["io::send"].external);
     }
 
     #[test]

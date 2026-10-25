@@ -24,7 +24,7 @@ serves every later Python. maturin builds it.
 |---|---|
 | `keleusma.compile(source)` | `lexer::tokenize`, then `parser::parse`, then `compiler::compile`, the pipeline `examples/piano_roll.rs` uses |
 | `keleusma.VM(module)` | `Arena::try_with_capacity` sized as described under Arena sizing, then `Vm::new(module, &arena)`, which verifies the module |
-| `vm.register(name, callable)` | `Vm::register_native_closure(name, func)`, where `func` is `Fn(&[Value]) -> Result<Value, VmError> + 'static` |
+| `vm.register(name, callable)` | `Vm::register_native_with_ctx_closure`, once per native at construction, as described under Risk 2 |
 | `vm.call(*args)` | `Vm::call(&[Value])`, returning a `VmState`, implemented as described under Calling and resuming |
 | `vm.resume(value)` | `Vm::resume(Value)`, implemented likewise |
 | `vm.stream(*args, inputs=None)` | A Python generator over `call` and `resume`, as described under Streaming |
@@ -133,49 +133,66 @@ message, which names the chunk and the failure. Every other Keleusma error durin
 construction or a run raises `VMError(KeleusmaError, RuntimeError)`. A capacity that
 overflows raises `OverflowError`.
 
-## Risk 2, Python natives are not bounded
+## Risk 2, Python natives are not bounded, roadmap task 7
 
-A native registered with `register_native_closure` receives the default bounds,
-`DEFAULT_NATIVE_WCET` of 10 cost units and a default memory figure, and
-`Vm::set_native_bounds` can change them. A Python callable has no bound at all, since it
-can run for any time and allocate any memory.
+**The guarantee boundary.** Keleusma's worst-case guarantees cover the script and the
+bounds declared for each native. A Python callable has no bound, since it can run for
+any time and allocate any memory. The declared `wcet` and `wcmu_bytes` are attestations
+the host makes and Keleusma trusts, which Python code cannot honour. The binding says so
+in `keleusma._native`, the README and this document, and implies nothing stronger.
 
-The binding must state plainly that Keleusma's worst-case guarantees cover the script and
-the bounds declared for each native, never the Python code behind a native.
+**Implemented on 2026-10-25,** in `src/natives.rs` and `src/vm.rs`.
 
-**Decided on 2026-10-24 by the operator.** Version 0.1.0 exposes
-`Vm::set_native_bounds` for natives written in Python. The planned surface is optional
-keyword arguments on registration, `vm.register(name, callable, *, wcet=None,
-wcmu_bytes=None)`, together with a method `vm.set_native_bounds(name, wcet, wcmu_bytes)`
-that mirrors the Rust call. Omitted bounds keep Keleusma's defaults. Both values are
-checked to fit `u32` and raise `OverflowError` otherwise. The documentation must call the
-values attestations that the host makes and Keleusma trusts, which Python code cannot
-itself honour.
+| Python | Effect |
+|---|---|
+| `VM(module, natives={"host::f": f})` | Registers `f` with Keleusma's default bounds, 10 cost units and 0 bytes |
+| `VM(module, natives={"host::f": Native(f, wcet=50, wcmu_bytes=256)})` | Registers with declared bounds, and sizes the arena with the memory bound |
+| `vm.register(name, f, *, wcet=None, wcmu_bytes=None)` | Replaces the callable, keeping the declared bounds unless new ones are given |
+| `vm.set_native_bounds(name, wcet, wcmu_bytes)` | Declares new bounds, or refuses them with `VerifyError` if the arena cannot hold them |
+| `vm.native_bounds(name)` | The declared `(wcet, wcmu_bytes)` |
 
-**The arena must cover the declared bounds.** A native's memory bound adds to the
-module's worst-case memory use, so it must be known when the arena is sized.
+- **Arena sizing.** The memory bounds are passed to `auto_arena_capacity_for` in the
+  order of the module's `native_names`, as the Keleusma cookbook recipe "Auto-sizing the
+  arena from the module" describes, and `verify_resources` confirms the sizing at
+  construction. Neither `call` nor `resume` runs `verify_resources` by itself, so every
+  later bound change runs it, and a refused change is reverted in Keleusma as well as in
+  the binding's record. No path leaves a bound uncovered.
+- **One closure per native.** Each native the module names gets a Keleusma closure at
+  construction, which looks the callable up in a registry shared with the VM object.
+  Registration therefore updates an entry rather than registering anew, and the VM's
+  `__traverse__` lets Python's garbage collector see the callables, so a native bound to
+  the object that owns its VM forms a cycle that is collected. A test confirms it.
+- **Missing natives.** `call` and `resume` refuse with `VMError` while any native the
+  module names has no callable, before the VM runs, so the VM stays usable. Keleusma
+  itself would fail inside the VM with `InvalidBytecode`.
+- **Exceptions.** A native returns `Result<Value, VmError>`, which cannot carry a Python
+  exception, so the closure stores the exception and returns `NativeError`, and the VM
+  re-raises the stored exception. The caller receives the very object the native
+  raised, including a `KeyboardInterrupt`. The VM is then marked failed, as after any
+  runtime error.
+- **Types.** A native declared as `use host::f(T1, T2) -> R` converts its arguments and
+  result by those types, including composites. A bare `use host::f` converts scalars by
+  their runtime tags and refuses composites and `Fixed` with `TypeError`, because their
+  layout and fraction bits are unknown without a type.
+- **Composite results consume arena.** Keleusma copies a native's composite result,
+  with its text, into the arena on every call, which was observed to exhaust an arena of
+  the bare footprint. The native's `wcmu_bytes` is the place to declare that size, and
+  the argument budget covers it otherwise.
+- **Re-entry** into the same VM from a native is refused by PyO3's borrow checking with
+  an exception. The registry is borrowed only to clone the callable, so no borrow is
+  held while Python runs.
+- **Not supported.** `use external` natives, which Keleusma classifies differently, are
+  refused at construction.
 
-- **Fact.** Keleusma 0.2.2 provides two mechanisms. `auto_arena_capacity_for(module,
-  native_wcmu)` sizes an arena from per-native bounds, given in the order of the module's
-  `native_names` table, as the Keleusma cookbook recipe "Auto-sizing the arena from the
-  module" describes. `Vm::verify_resources()` re-checks the module against the arena
-  after natives are registered and their bounds set, as `examples/wcmu_attestation.rs`
-  does.
-- **Fact.** Neither `call` nor `resume` runs `verify_resources` by itself. A host that
-  raises a bound after construction without calling it runs with an arena the verifier
-  never admitted.
-- **Planned for task 7.** Natives and their bounds are declared when the VM is built,
-  as in `keleusma.VM(module, natives={"host::draw": draw})`, where a value is either a
-  bare callable with Keleusma's default bounds or `keleusma.native(callable, wcet=...,
-  wcmu_bytes=...)`. The binding computes the bound slice in `native_names` order, sizes
-  the arena with it, builds and registers, and then calls `verify_resources` as a check
-  of its own sizing. `vm.register` and `vm.set_native_bounds` after construction remain
-  for compatibility with the Rust interface, and each runs `verify_resources`, raising
-  if the existing arena cannot hold the new bound. No path leaves a bound uncovered.
-- **Inference.** Opaque host values do not change this. In an arena-resident composite,
-  Keleusma stores an opaque as an index into a registry on the VM, not as the
-  `Arc<dyn HostOpaque>` fat pointer itself, so its arena cost is one word. Opaques are
-  outside 0.1.0 in any case.
+**Evidence.** 24 tests cover calls, typed and untyped conversion, exception identity,
+re-entry, registration, bounds and the collected cycle. Three mutations each made tests
+fail: not re-raising, not reverting a refused bound, and not traversing the registry.
+The first version of the revert test missed its mutation, because it checked only the
+binding's record, and it now also checks the time figure, which reads Keleusma's copy.
+
+**Inference.** Opaque host values do not change the sizing. In an arena-resident
+composite, Keleusma stores an opaque as an index into a registry on the VM, so its arena
+cost is one word. Opaques are outside 0.1.0 in any case.
 
 ## Calling and resuming, roadmap task 5
 

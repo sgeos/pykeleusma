@@ -313,3 +313,73 @@ fn fields<'a, 'py>(
         })
         .collect()
 }
+
+/// Convert a value with no declared type, as a bare `use host::name` gives a native's
+/// arguments. Scalars carry their own tags and convert. A `Fixed` has no fraction-bit
+/// count without a type, and a composite has no field types, so both need a declared
+/// signature, `use host::name(T1, T2) -> R`, and raise `TypeError` otherwise.
+pub fn to_py_untyped<'py>(
+    py: Python<'py>,
+    value: &Value,
+    ctx: &ReadContext<'_>,
+) -> PyResult<Bound<'py, PyAny>> {
+    match value {
+        Value::Unit => Ok(py.None().into_bound(py)),
+        Value::Bool(b) => b.into_bound_py_any(py),
+        Value::Byte(b) => b.into_bound_py_any(py),
+        Value::Int(n) => n.into_bound_py_any(py),
+        Value::Float(f) => f.into_bound_py_any(py),
+        Value::StaticStr(s) => s.into_bound_py_any(py),
+        Value::KStr(k) => k.get(ctx.arena).map_err(|_| stale())?.into_bound_py_any(py),
+        other => Err(PyTypeError::new_err(format!(
+            "a native without a declared signature received {}, which needs one; \
+             declare it as `use host::name(T1, T2) -> R`",
+            kind_name(other)
+        ))),
+    }
+}
+
+/// Convert a Python result with no declared type, the counterpart of
+/// [`to_py_untyped`]. An `int` becomes a `Word`, never a `Byte`, and a `keleusma.Fixed`
+/// carries its own representation.
+pub fn to_value_untyped(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if obj.is_none() {
+        return Ok(Value::Unit);
+    }
+    if obj.is_instance_of::<PyBool>() {
+        return Ok(Value::Bool(obj.is_truthy()?));
+    }
+    if obj.is_instance_of::<PyInt>() {
+        return Ok(Value::Int(obj.extract::<i64>()?));
+    }
+    if obj.is_instance_of::<PyFloat>() {
+        return Ok(Value::Float(obj.extract::<f64>()?));
+    }
+    if obj.is_instance_of::<PyString>() {
+        return Ok(Value::StaticStr(obj.extract::<String>()?));
+    }
+    let fixed = obj.py().import("keleusma._fixed")?.getattr("Fixed")?;
+    if obj.is_instance(&fixed)? {
+        return Ok(Value::Fixed(obj.getattr("raw")?.extract::<i64>()?));
+    }
+    let got = obj
+        .get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "an unknown type".to_string());
+    Err(PyTypeError::new_err(format!(
+        "a native without a declared signature returned {got}, which needs one; \
+         declare it as `use host::name(T1, T2) -> R`"
+    )))
+}
+
+fn kind_name(value: &Value) -> &'static str {
+    match value {
+        Value::Fixed(_) => "a Fixed value",
+        Value::Tuple(_) => "a tuple",
+        Value::Array(_) => "an array",
+        Value::Struct(_) => "a struct",
+        Value::Enum(_) => "an enum value",
+        _ => "a value of an unsupported kind",
+    }
+}

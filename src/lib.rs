@@ -4,10 +4,11 @@
 //! milestone in `docs/roadmap/V0_1_0.md`. Task 1, owning the arena and the VM together,
 //! lives in [`owned_vm`], task 2, compilation, in [`compile`], task 3, the Python `VM`
 //! class, in [`vm`], and task 4, value conversion by declared type, in [`convert`] and
-//! [`types`].
+//! [`types`], and task 7, Python natives, in [`natives`].
 
 mod compile;
 mod convert;
+mod natives;
 mod owned_vm;
 mod types;
 mod vm;
