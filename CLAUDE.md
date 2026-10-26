@@ -15,10 +15,9 @@ package is `keleusma`.
 **Status.** Cut on 2026-10-24. Version 0.2.2.0 builds against the published Keleusma 0.2.2,
 and tasks 1 to 15 of the first milestone are done. The binding covers what the Keleusma
 book describes, except what is blocked on Keleusma. CI tests Linux, macOS, Windows,
-and FreeBSD from the source distribution. Version 0.2.2.0 is released on 2026-10-26,
-and its wheels and source distribution are published to PyPI from the `v0.2.2.0` tag
-once the operator approves the deployment, as
-[`docs/process/RELEASING.md`](docs/process/RELEASING.md) describes. The milestone is
+and FreeBSD from the source distribution. Version 0.2.2.0 was released on 2026-10-26,
+and its wheels and source distribution are on PyPI, published from the `v0.2.2.0` tag
+as [`docs/process/RELEASING.md`](docs/process/RELEASING.md) describes. The milestone is
 [`docs/roadmap/V0_1_0.md`](docs/roadmap/V0_1_0.md), the design is
 [`docs/architecture/BINDING_DESIGN.md`](docs/architecture/BINDING_DESIGN.md), and the move to
 0.2.3 is planned in

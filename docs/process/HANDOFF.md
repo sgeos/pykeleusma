@@ -20,8 +20,10 @@ completed, moved or abandoned.
   and free-threaded 3.14t and 3.15t wheels, smoke-tests all but the free-threaded musl
   ones, builds the sdist,
   and has a publish job that runs only from a pushed `v*` tag in the `pypi`
-  environment. Nothing has been published. The release pull request for 0.2.2.0,
-  dated 2026-10-26, sets the CHANGELOG, README, CLAUDE.md and CITATION.cff.
+  environment.
+- **Released.** 0.2.2.0 is on PyPI since 2026-10-26, published from the tag
+  `v0.2.2.0` on `aa383b7` through trusted publishing, 24 wheels and the sdist, each
+  with a provenance attestation naming `wheels.yml` and the `pypi` environment.
 - **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
   `tests/test_packaging.py`. `SECURITY.md` and `docs/process/RELEASING.md` exist. The
   metadata passes `twine check --strict`, and the sdist installs and runs.
@@ -58,11 +60,9 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
 
-Publication is the operator's. Register the PyPI trusted publisher, push the tag
-`v0.2.2.0` on the merge of the release pull request, and approve the `pypi`
-deployment, as `docs/process/RELEASING.md` describes. Then check the result as its
-step 4 says. If the tag is not pushed, the README and CLAUDE.md overstate the state. Separately, wait for
-Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan and revise the
+Nothing is owed for 0.2.2.0. Optional follow-ups for the operator are pointing the
+repository's homepage field at the PyPI page and creating a GitHub release from the
+tag. Wait for Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan and revise the
 README's Limitations section by what clears.
 
 ## Open
