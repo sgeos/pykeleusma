@@ -4,25 +4,30 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-26, the release pull request for 0.2.2.0
+## 2026-10-26, the publication of 0.2.2.0
 
-**Asked.** Prepare the release pull request with today's date. The operator is in
-Pacific time, where the date is 2026-10-26, the same as in Coordinated Universal Time
-when the change was made.
+**Asked.** Double check that the deployment is complete.
 
-**Changed.**
-- `CHANGELOG.md` moves the unreleased entries under `[0.2.2.0] - 2026-10-26`, keeps an
-  empty `[Unreleased]` section, and adds link references for both.
-- `README.md` replaces the sentence that nothing is published with one naming 0.2.2.0
-  as the first release on PyPI. The status stays early development.
-- `CLAUDE.md` states the release and that publication follows the tag and approval.
-- `CITATION.cff` gains `version` and `date-released`.
-- The version in `pyproject.toml` and `Cargo.toml` already reads 0.2.2.0 and 0.2.2.
+**Verified.**
+- The tag run of `wheels.yml` for `v0.2.2.0` on `aa383b7` succeeded, and its publish
+  job finished at 21:14:57 in Coordinated Universal Time after the operator's approval.
+- PyPI lists version 0.2.2.0 with 25 files, the 24 wheels and the source distribution,
+  none yanked, with license `0BSD` and `Requires-Python >=3.12`.
+- The source distribution's provenance attestation names the publisher `GitHub`,
+  repository `sgeos/pykeleusma`, workflow `wheels.yml` and environment `pypi`. Only
+  that file's attestation was fetched.
+- `pip install pykeleusma==0.2.2.0` from PyPI into a clean environment on macOS ARM64
+  with CPython 3.14 chose the stable-ABI wheel, and a compiled script returned
+  `Finished(42)`. `keleusma.KELEUSMA_VERSION` reported 0.2.2 and the bytecode version 1.
+- The project description is the README as Markdown, without the old sentence that
+  nothing is published, and the PyPI badge reports v0.2.2.0.
 
-**Caveat.** The README and CLAUDE.md describe the release as published once this
-merges, which becomes true only when the operator pushes the tag and approves the
-deployment. If publication is delayed, these statements overstate the state until it
-happens.
+**Not verified.** Installation on other platforms from PyPI. The same wheels were
+smoke-tested in CI before upload, but not downloaded back.
 
-**Needs the operator.** Register the PyPI trusted publisher, push `v0.2.2.0` on the
-merge commit, and approve the `pypi` deployment.
+**Before this.** PR #29 from Dependabot updated `setup-uv` and `upload-artifact`, and
+was merged before the release at the operator's direction. PR #30 prepared the
+release and passed the full CI with those updates.
+
+**Optional for the operator.** Point the repository's homepage field at the PyPI page,
+and create a GitHub release from the tag.
