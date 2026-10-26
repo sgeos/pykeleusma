@@ -7,26 +7,32 @@ flight, why, what is owed and the next step, within a budget of 8 KB. History li
 git. A rewrite that drops an open item says in its commit message whether the item was
 completed, moved or abandoned.
 
-## State on 2026-10-25
+## Paused on 2026-10-26
+
+The operator put this line on ice until the public Keleusma 0.2.3 is published on
+crates.io. Nothing was in flight. Every run on `main` had passed, with no open pull
+requests, issues or security alerts, and an empty inbox.
+
+- **Restart trigger.** Keleusma 0.2.3 on crates.io, or a credible vulnerability report
+  against 0.2.2.0, which would need a 0.2.2.1 on the current pin.
+- **While paused.** Dependabot opens one grouped pull request for the pinned actions
+  each month. CI uses the newest stable and nightly Rust and the newest Python builds,
+  and runs on no schedule, so drift surfaces only on the next pull request. A red
+  Dependabot pull request may therefore be drift rather than a bad update.
+- **On restart.** Run the validity checks, read the inbox, and fix any drift on `main`
+  first. Then follow `docs/architecture/MIGRATION_V0_2_3.md`. The result is 0.2.3.0,
+  because the bytecode version changes from 1 to 2.
+
+## State on 2026-10-26
 
 - **Published.** The public GitHub repository `sgeos/pykeleusma`, licensed 0BSD.
-- **Continuous integration.** On a push to `main` or a pull request labelled `full-ci`,
-  `ci.yml` covers Linux, macOS and Windows with Python 3.12 and 3.15, Linux also with
-  3.13, 3.14 and free-threaded 3.14t, FreeBSD from the source distribution, every local
-  check, and Miri with Tree Borrows. Other pull requests run Linux 3.12 and 3.15,
-  Windows 3.12, 3.14t and Miri, and one quick wheel, unless they touch packaging.
-  Documentation-only changes run nothing. `wheels.yml` builds 24 wheels on eight platforms, glibc
-  and musl Linux, macOS and Windows on x86-64 and ARM64, each with a stable-ABI wheel
-  and free-threaded 3.14t and 3.15t wheels, smoke-tests all but the free-threaded musl
-  ones, builds the sdist,
-  and has a publish job that runs only from a pushed `v*` tag in the `pypi`
-  environment.
+- **Continuous integration.** A push to `main` or a `full-ci` pull request runs the
+  full set, Linux, macOS, Windows and FreeBSD, Miri, and 24 wheels with the sdist.
+  Other pull requests run a reduced set. The headers of `ci.yml` and `wheels.yml`
+  give the detail, and publishing runs only from a `v*` tag in the `pypi` environment.
 - **Released.** 0.2.2.0 is on PyPI since 2026-10-26, published from the tag
-  `v0.2.2.0` on `aa383b7` through trusted publishing, 24 wheels and the sdist, each
-  with a provenance attestation naming `wheels.yml` and the `pypi` environment.
-- **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
-  `tests/test_packaging.py`. `SECURITY.md` and `docs/process/RELEASING.md` exist. The
-  metadata passes `twine check --strict`, and the sdist installs and runs.
+  `v0.2.2.0` on `aa383b7` through trusted publishing, 24 wheels and the sdist. The
+  sdist's provenance names `wheels.yml` and the `pypi` environment.
 - **GitHub settings,** set on 2026-10-25 at parity with the Keleusma and
   angelssword-adventurers-creator repositories where sensible. Topics, merged branches
   deleted, no wiki or projects, private vulnerability reporting and Dependabot alerts
@@ -62,8 +68,9 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 Nothing is owed for 0.2.2.0. Optional follow-ups for the operator are pointing the
 repository's homepage field at the PyPI page and creating a GitHub release from the
-tag. Wait for Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan and revise the
-README's Limitations section by what clears.
+tag. Otherwise the line is paused, as the section above describes. When Keleusma
+0.2.3 is published, follow the migration plan and revise the README's Limitations
+section by what clears.
 
 ## Open
 
