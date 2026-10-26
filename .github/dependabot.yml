@@ -1,8 +1,9 @@
 # Proposes updates to the pinned actions. Each proposal is a pull request that CI checks
 # and the operator reviews. The cooldown keeps a release out until it has had a week to
-# be noticed if it is bad. Grouping puts every action update of one week into a single
-# pull request, which keeps review and CI load to one run a week. A change to wheels.yml
-# runs the full wheel matrix, as that workflow's plan job describes.
+# be noticed if it is bad. Grouping puts every action update of one month into a single
+# pull request. A change to wheels.yml runs the full wheel matrix, as that workflow's
+# plan job describes, so the schedule is monthly while the line is paused, to keep that
+# load on the account's shared runners to one run a month.
 #
 # The Cargo and uv dependencies are left out by decision. Keleusma is pinned exactly,
 # and moving to a later release changes the bytecode version, so it moves only as
@@ -14,7 +15,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     groups:

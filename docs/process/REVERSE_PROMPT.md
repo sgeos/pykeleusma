@@ -4,30 +4,27 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-26, the publication of 0.2.2.0
+## 2026-10-26, the pause until Keleusma 0.2.3
 
-**Asked.** Double check that the deployment is complete.
+**Asked.** Check that the line is ready to be put on ice, act if needed, and record
+the pause in `HANDOFF.md`.
 
-**Verified.**
-- The tag run of `wheels.yml` for `v0.2.2.0` on `aa383b7` succeeded, and its publish
-  job finished at 21:14:57 in Coordinated Universal Time after the operator's approval.
-- PyPI lists version 0.2.2.0 with 25 files, the 24 wheels and the source distribution,
-  none yanked, with license `0BSD` and `Requires-Python >=3.12`.
-- The source distribution's provenance attestation names the publisher `GitHub`,
-  repository `sgeos/pykeleusma`, workflow `wheels.yml` and environment `pypi`. Only
-  that file's attestation was fetched.
-- `pip install pykeleusma==0.2.2.0` from PyPI into a clean environment on macOS ARM64
-  with CPython 3.14 chose the stable-ABI wheel, and a compiled script returned
-  `Finished(42)`. `keleusma.KELEUSMA_VERSION` reported 0.2.2 and the bytecode version 1.
-- The project description is the README as Markdown, without the old sentence that
-  nothing is published, and the PyPI badge reports v0.2.2.0.
+**Checked, and ready.** The working tree is clean and `main` matches the remote. The
+newest CI and Wheels runs on `main` and the `v0.2.2.0` tag run succeeded. There are no
+open pull requests or issues, no open Dependabot or secret scanning alerts, and no
+security advisories. The inbox is empty, and no sccache server is running. Code
+scanning is not set up, so it has no alerts to report.
 
-**Not verified.** Installation on other platforms from PyPI. The same wheels were
-smoke-tested in CI before upload, but not downloaded back.
+**Done.**
+- `HANDOFF.md` opens with the pause, its restart trigger, what continues while
+  paused, and what to do first on restart.
+- Dependabot runs monthly instead of weekly, because each of its pull requests runs
+  the full wheel matrix on the account's shared runners.
+- Five local branches already merged into `main` were deleted with the safe delete.
+  The sandbox kept git from removing their sections from `.git/config`, which is
+  harmless.
+- `HANDOFF.md` now says that only the sdist's provenance was checked, where it had
+  claimed every file's.
 
-**Before this.** PR #29 from Dependabot updated `setup-uv` and `upload-artifact`, and
-was merged before the release at the operator's direction. PR #30 prepared the
-release and passed the full CI with those updates.
-
-**Optional for the operator.** Point the repository's homepage field at the PyPI page,
-and create a GitHub release from the tag.
+**Unanswered.** Five requests to `v0.2.3` remain open, as `HANDOFF.md` lists. Replies
+will wait in the inbox.
