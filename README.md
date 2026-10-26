@@ -25,7 +25,8 @@ conversion, Python natives and shared data work, as do the book's structs, enums
 options, big numbers, opaque host values, recoverable native errors, bundled libraries,
 precompiled, signed and encrypted bytecode, hot swap and custom cost models. The ten
 example scripts that ship with Keleusma run in tests with their stated results, and so
-do three examples of this repository's own. Nothing is published to PyPI yet.
+do three examples of this repository's own. Version 0.2.2.0, released on 2026-10-26,
+is the first release published to PyPI.
 
 The design is
 [`docs/architecture/BINDING_DESIGN.md`](https://github.com/sgeos/pykeleusma/blob/main/docs/architecture/BINDING_DESIGN.md),

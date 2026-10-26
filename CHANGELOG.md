@@ -5,6 +5,10 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2.0] - 2026-10-26
+
+The first release published to PyPI.
+
 ### Changed
 
 - The version is now 0.2.2.0. The first three parts name the Keleusma release the
@@ -175,3 +179,6 @@ All notable changes are recorded here. The format follows
 - The repository seed. A PyO3 extension module `keleusma._keleusma`, built by maturin
   against `keleusma = "=0.2.2"`, exposing `__version__`, `KELEUSMA_VERSION` and
   `BYTECODE_VERSION`. Smoke tests, the design, the 0.1.0 milestone and the process files.
+
+[Unreleased]: https://github.com/sgeos/pykeleusma/compare/v0.2.2.0...HEAD
+[0.2.2.0]: https://github.com/sgeos/pykeleusma/tree/v0.2.2.0
