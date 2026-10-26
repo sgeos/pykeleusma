@@ -20,7 +20,8 @@ completed, moved or abandoned.
   and free-threaded 3.14t and 3.15t wheels, smoke-tests all but the free-threaded musl
   ones, builds the sdist,
   and has a publish job that runs only from a pushed `v*` tag in the `pypi`
-  environment. Nothing has been published.
+  environment. Nothing has been published. The release pull request for 0.2.2.0,
+  dated 2026-10-26, sets the CHANGELOG, README, CLAUDE.md and CITATION.cff.
 - **Publication prepared.** `THIRD_PARTY_LICENSES.txt` is in every wheel and checked by
   `tests/test_packaging.py`. `SECURITY.md` and `docs/process/RELEASING.md` exist. The
   metadata passes `twine check --strict`, and the sdist installs and runs.
@@ -39,12 +40,7 @@ completed, moved or abandoned.
   `scripts/check.sh` is the local gate, its hygiene section the template's unchanged.
   Deliberately different are the reduced pull request set, the absent trailer, and
   `.claude/` ignored whole. A local `secret/disclosure-terms.txt` feeds the gate.
-- **Tasks 1 to 15 done.** Task 15 made the README list the limitations before the
-  guarantees, separating those expected to clear with Keleusma 0.2.3. Task 13 resolved the known issues and debt, and prepared for
-  Keleusma 0.2.3. Task 14 closed the open items the binding itself could close.
-  `use external` natives run, and the yield guard covers values with no recorded type.
-  `vm.step` advances one iteration per call, `vm.arena_peak_bytes` shows arena use, and
-  `vm.private_data` reads private fields.
+- **Tasks 1 to 15 done.** The roadmap table records each, and git holds the detail.
 - **Version.** 0.2.2.0, the Keleusma release it bridges with a fourth part counting
   binding releases. It lives in `pyproject.toml`, because Cargo admits only three parts.
 - **Migration.** `docs/architecture/MIGRATION_V0_2_3.md` is the plan. `src/compat.rs`
@@ -62,8 +58,10 @@ PyPI, creating a remote and force-pushing still need confirmation in session.
 
 ## Next step
 
-Publication is the operator's, by the one-time setup and the release steps in
-`docs/process/RELEASING.md`. Nothing else is owed before it. Separately, wait for
+Publication is the operator's. Register the PyPI trusted publisher, push the tag
+`v0.2.2.0` on the merge of the release pull request, and approve the `pypi`
+deployment, as `docs/process/RELEASING.md` describes. Then check the result as its
+step 4 says. If the tag is not pushed, the README and CLAUDE.md overstate the state. Separately, wait for
 Keleusma 0.2.3 with `keleusma-wire`, then follow the migration plan and revise the
 README's Limitations section by what clears.
 

@@ -4,40 +4,25 @@
 
 A state file, overwritten whole after each task.
 
-## 2026-10-25, the sync with the project template
+## 2026-10-26, the release pull request for 0.2.2.0
 
-**Asked.** Sync the repository with `sgeos/project-template`, with the code of conduct
-as the high priority, make sure the GitHub repository is in order, audit the template,
-and draft a message for the administrative line if the audit warrants one.
+**Asked.** Prepare the release pull request with today's date. The operator is in
+Pacific time, where the date is 2026-10-26, the same as in Coordinated Universal Time
+when the change was made.
 
-**Synced, against the template at `227f261`.**
-- `CODE_OF_CONDUCT.md` unchanged from the template.
-- `CONTRIBUTING.md`, `CITATION.cff` and `llms.txt`, adapted to the binding, with the
-  guarantee boundary and the line between this repository and Keleusma.
-- `.github/CODEOWNERS`, `dependabot.yml` for the pinned actions only, `release.yml`,
-  and `rulesets/main.json`, which records the live ruleset. Cargo and uv stay out of
-  Dependabot because their pins are deliberate, as the file says.
-- `scripts/check.sh` with the template's hygiene section unchanged, followed by the
-  project's checks, and `--hygiene-only` to stop before them. Also the pre-push hook,
-  `scripts/worktree.sh`, `.gitattributes`, the decision template, and the template's
-  `.editorconfig` and `.gitignore` entries.
-- CI gains a repository job running the hygiene checks, actionlint and zizmor. Every
-  job has a timeout and only the permissions it needs. The concurrency group no longer
-  lets a second merge to `main` cancel the first merge's runs, which it could before.
-  Two `ls | wc -l` counts became array counts, because actionlint without the local
-  ignore flag reported them. zizmor's one finding, an expression inside a run step, now
-  goes through an environment variable.
+**Changed.**
+- `CHANGELOG.md` moves the unreleased entries under `[0.2.2.0] - 2026-10-26`, keeps an
+  empty `[Unreleased]` section, and adds link references for both.
+- `README.md` replaces the sentence that nothing is published with one naming 0.2.2.0
+  as the first release on PyPI. The status stays early development.
+- `CLAUDE.md` states the release and that publication follows the tag and approval.
+- `CITATION.cff` gains `version` and `date-released`.
+- The version in `pyproject.toml` and `Cargo.toml` already reads 0.2.2.0 and 0.2.2.
 
-**GitHub settings changed.** Squash and rebase merging are disabled, so only merge
-commits remain, matching the process. The labels `breaking` and `ignore-for-release`
-were created for `release.yml`. Everything else already matched the template's step 9.
+**Caveat.** The README and CLAUDE.md describe the release as published once this
+merges, which becomes true only when the operator pushes the tag and approves the
+deployment. If publication is delayed, these statements overstate the state until it
+happens.
 
-**Kept different from the template, deliberately.** The reduced pull request set, the
-absent `Co-Authored-By` trailer, and `.claude/` ignored whole.
-
-**Audit.** The findings went to the operator as a draft for `Op55-admin-polysabite`,
-not into the repository.
-
-**Verified.** The local gate passes, with 411 Python and 49 Rust tests. actionlint and
-zizmor 1.31.1 report nothing on either workflow. The pull request results are recorded
-in the commit history, not here.
+**Needs the operator.** Register the PyPI trusted publisher, push `v0.2.2.0` on the
+merge commit, and approve the `pypi` deployment.
